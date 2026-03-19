@@ -89,6 +89,13 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
       await queryClient.invalidateQueries({ queryKey: ["market", marketId] });
       await queryClient.invalidateQueries({ queryKey: ["market-stats", marketId] });
       await queryClient.invalidateQueries({ queryKey: ["market-price-line", marketId] });
+
+      // Portfolio-derived UI: refresh overview, positions, trades and history.
+      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
     },
     onError: (err) => {
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;

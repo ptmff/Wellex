@@ -4,21 +4,7 @@ import { motion } from "framer-motion";
 import { User, Settings, LogOut, Shield, Bell, ExternalLink } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/auth/AuthContext";
-
-type PortfolioSummary = {
-  balance: { available: number; reserved: number; total: number; currency: string };
-  pnl: { realized: number; unrealized: number; total: number };
-  positions: { count: number; open: number; totalInvested: number };
-  recentTrades: Array<{
-    id: string;
-    marketId: string;
-    side: "yes" | "no";
-    price: number;
-    quantity: number;
-    totalValue: number;
-    executedAt: string;
-  }>;
-};
+import type { PaginatedResult, PortfolioSummaryResponse, PortfolioTrade } from "@/lib/portfolio";
 
 function formatRelativeTime(iso: string): string {
   const ts = new Date(iso).getTime();
@@ -34,10 +20,30 @@ function formatRelativeTime(iso: string): string {
 export default function Profile() {
   const { user, request, logout } = useAuth();
 
-  const { data: portfolio, isLoading, isError, error } = useQuery({
-    queryKey: ["portfolio-summary"],
-    queryFn: () => request<PortfolioSummary>("/portfolio", { method: "GET" }),
+  const { data: portfolio, isLoading: isPortfolioLoading, isError, error } = useQuery({
+    queryKey: ["portfolio"],
+    queryFn: () => request<PortfolioSummaryResponse>("/portfolio", { method: "GET" }),
   });
+
+  const {
+    data: tradeHistory,
+    isLoading: isTradesLoading,
+    isError: isTradesError,
+    error: tradesError,
+  } = useQuery({
+    queryKey: ["portfolio-trades", "profile", 1, 5],
+    queryFn: () =>
+      request<PaginatedResult<PortfolioTrade>>("/portfolio/trades?page=1&limit=5", {
+        method: "GET",
+      }),
+    staleTime: 1000 * 30,
+  });
+
+  const tradesErrorMessage = isTradesError
+    ? typeof (tradesError as { message?: unknown }).message === "string"
+      ? (tradesError as { message?: unknown }).message
+      : "Failed to load trades"
+    : null;
 
   const errorMessage =
     isError && error
@@ -104,12 +110,12 @@ export default function Profile() {
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <h2 className="text-sm font-semibold mb-3">Recent Activity</h2>
             <div className="space-y-2">
-              {isLoading ? (
+              {isTradesLoading ? (
                 <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
-              ) : isError ? (
-                <div className="text-sm text-destructive py-4 text-center">{errorMessage ?? "Failed to load"}</div>
+              ) : isTradesError ? (
+                <div className="text-sm text-destructive py-4 text-center">{tradesErrorMessage ?? "Failed to load"}</div>
               ) : (
-                portfolio?.recentTrades?.map((t) => (
+                (tradeHistory?.data ?? []).map((t) => (
                   <motion.div
                     key={t.id}
                     initial={{ opacity: 0 }}
@@ -118,9 +124,12 @@ export default function Profile() {
                     className="flex items-center justify-between py-2 border-b border-border/30 last:border-0"
                   >
                     <div>
-                      <div className="text-sm font-medium">{t.side === "yes" ? "YES" : "NO"} trade</div>
+                      <div className="text-sm font-medium">
+                        {t.side === "yes" ? "YES" : "NO"} trade
+                      </div>
+                      <div className="text-xs text-muted-foreground">{t.marketTitle}</div>
                       <div className="text-xs text-muted-foreground">
-                        {t.price}¢ @ {t.quantity} shares
+                        {Math.round(t.price * 100)}¢ @ {t.quantity} shares
                       </div>
                     </div>
                     <div className="text-right">
