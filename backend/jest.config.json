@@ -1,0 +1,39 @@
+{
+  "preset": "ts-jest",
+  "testEnvironment": "node",
+  "roots": ["<rootDir>/test", "<rootDir>/src"],
+  "testMatch": ["**/*.test.ts", "**/*.spec.ts"],
+  "collectCoverageFrom": [
+    "src/**/*.ts",
+    "!src/main.ts",
+    "!src/database/run-migrations.ts",
+    "!src/database/seeds/**",
+    "!src/**/*.d.ts"
+  ],
+  "coverageThresholds": {
+    "global": {
+      "branches": 60,
+      "functions": 60,
+      "lines": 60,
+      "statements": 60
+    }
+  },
+  "coverageDirectory": "coverage",
+  "coverageReporters": ["text", "lcov", "html"],
+  "moduleNameMapper": {
+    "^@/(.*)$": "<rootDir>/src/$1",
+    "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+    "^@common/(.*)$": "<rootDir>/src/common/$1",
+    "^@config/(.*)$": "<rootDir>/src/config/$1",
+    "^@infra/(.*)$": "<rootDir>/src/infrastructure/$1"
+  },
+  "transform": {
+    "^.+\\.ts$": ["ts-jest", {
+      "tsconfig": {
+        "strict": false
+      }
+    }]
+  },
+  "testTimeout": 10000,
+  "verbose": true
+}
