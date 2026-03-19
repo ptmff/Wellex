@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import type { BackendMarket } from "@/api/markets";
 import { getMarketPriceLine } from "@/api/markets";
+import { formatDateToLocaleDateString, parseDate } from "@/lib/date";
 
 export function MarketCard({ market, index = 0 }: { market: BackendMarket; index?: number }) {
   const { request } = useAuth();
@@ -14,8 +15,8 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
   const probColor = probabilityPct >= 50 ? "text-success" : "text-danger";
   const isNew = (() => {
     const now = Date.now();
-    const created = new Date(market.createdAt).getTime();
-    return now - created <= 7 * 24 * 60 * 60 * 1000;
+    const createdTs = parseDate(market.createdAt)?.getTime();
+    return createdTs !== null && now - createdTs <= 7 * 24 * 60 * 60 * 1000;
   })();
 
   const { data: miniChartData } = useQuery({
@@ -97,10 +98,5 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
 }
 
 function useMemoClosesLabel(closesAt: string) {
-  // Keep it as a plain helper to avoid pulling in additional state.
-  try {
-    return new Date(closesAt).toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  } catch {
-    return "TBD";
-  }
+  return formatDateToLocaleDateString(closesAt, "en-US", { month: "short", day: "numeric" });
 }

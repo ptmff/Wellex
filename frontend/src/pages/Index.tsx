@@ -6,6 +6,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { listMarkets, type BackendMarket, type ListMarketsInput } from "@/api/markets";
+import { parseDate } from "@/lib/date";
 
 type Filter = "all" | "trending" | "new" | "ending";
 
@@ -81,8 +82,8 @@ export default function MarketsPage() {
       const now = Date.now();
       const windowMs = 14 * 24 * 60 * 60 * 1000;
       return categoryFiltered.filter((m) => {
-        const t = new Date(m.createdAt).getTime();
-        return Number.isFinite(t) && now - t <= windowMs;
+        const t = parseDate(m.createdAt)?.getTime();
+        return t !== null && now - t <= windowMs;
       });
     }
     if (filter === "ending") {
@@ -90,10 +91,10 @@ export default function MarketsPage() {
       const windowMs = 7 * 24 * 60 * 60 * 1000;
       return data
         .filter((m) => {
-          const closes = new Date(m.closesAt).getTime();
-          return Number.isFinite(closes) && closes >= now && closes - now <= windowMs;
+          const closesTs = parseDate(m.closesAt)?.getTime();
+          return closesTs !== null && closesTs >= now && closesTs - now <= windowMs;
         })
-        .sort((a, b) => new Date(a.closesAt).getTime() - new Date(b.closesAt).getTime());
+        .sort((a, b) => (parseDate(a.closesAt)?.getTime() ?? 0) - (parseDate(b.closesAt)?.getTime() ?? 0));
     }
     // `trending` is already applied via backend `featured=true`.
     return categoryFiltered;

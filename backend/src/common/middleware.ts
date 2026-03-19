@@ -54,6 +54,9 @@ export function sanitizeResponse() {
         // Remove sensitive fields from responses
         const sanitize = (obj: any): any => {
           if (Array.isArray(obj)) return obj.map(sanitize);
+          // `Date` objects lose their serialization when we spread/copy them.
+          // Preserve them as ISO strings so the frontend can parse timestamps.
+          if (obj instanceof Date) return obj.toISOString();
           if (obj && typeof obj === 'object') {
             const clean = { ...obj };
             delete clean.password_hash;

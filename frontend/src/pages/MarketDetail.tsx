@@ -10,28 +10,9 @@ import { useAuth } from "@/auth/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getMarket, getMarketPriceLine, getMarketStats, updateMarketStatus, type BackendMarket, type MarketStats, type PriceLinePoint } from "@/api/markets";
+import { formatDateToLocaleDateString, formatRelativeTime } from "@/lib/date";
 
 type RangeKey = "1D" | "1W" | "1M" | "All";
-
-function formatDateShort(iso: string) {
-  try {
-    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-  } catch {
-    return "TBD";
-  }
-}
-
-function formatRelativeTime(iso: string) {
-  const d = new Date(iso);
-  const diffMs = Date.now() - d.getTime();
-  if (!Number.isFinite(diffMs)) return "";
-  const minutes = Math.floor(diffMs / (60 * 1000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
 
 function priceLineToChartData(points: PriceLinePoint[]) {
   return points.map((p) => ({
@@ -184,7 +165,12 @@ export default function MarketDetail() {
                     <Users className="h-3.5 w-3.5" /> {stats?.uniqueTraders?.toLocaleString() ?? "—"}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" /> {formatDateShort(market.closesAt)}
+                    <Clock className="h-3.5 w-3.5" />{" "}
+                    {formatDateToLocaleDateString(market.closesAt, "en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
                   </span>
                 </div>
 
@@ -312,7 +298,14 @@ export default function MarketDetail() {
                   { label: "Volume (24h)", value: formatVolume(stats?.volume24h ?? market.stats.volume24h) },
                   { label: "Liquidity", value: formatVolume(stats?.liquidityTotal ?? market.stats.liquidityTotal) },
                   { label: "Traders", value: stats?.uniqueTraders?.toLocaleString() ?? "—" },
-                  { label: "End Date", value: formatDateShort(market.closesAt) },
+                  {
+                    label: "End Date",
+                    value: formatDateToLocaleDateString(market.closesAt, "en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    }),
+                  },
                   { label: "Resolution", value: market.resolutionCriteria ? market.resolutionCriteria : "Oracle" },
                 ].map((item) => (
                   <div key={item.label} className="flex justify-between">

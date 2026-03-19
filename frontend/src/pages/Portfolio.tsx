@@ -30,6 +30,7 @@ import type {
   PortfolioSummaryResponse,
   PortfolioTrade,
 } from "@/lib/portfolio";
+import { formatDateToLocaleDateString, formatDateToLocaleString, parseDate } from "@/lib/date";
 
 type ChartPoint = {
   time: string;
@@ -158,13 +159,18 @@ export default function Portfolio() {
 
   const chartData: ChartPoint[] = useMemo(() => {
     const txs = balanceHistory?.data ?? [];
-    const chronological = [...txs].sort(
-      (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-    );
-    return chronological.map((tx) => ({
-      time: new Date(tx.createdAt).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
-      value: tx.balanceAfter,
-    }));
+
+    return txs
+      .map((tx, idx) => {
+        const d = parseDate(tx.createdAt);
+        return {
+          time: d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "TBD",
+          value: tx.balanceAfter,
+          ts: d ? d.getTime() : idx, // fallback keeps chart usable even if date parsing fails
+        };
+      })
+      .sort((a, b) => a.ts - b.ts)
+      .map(({ time, value }) => ({ time, value }));
   }, [balanceHistory]);
 
   const recentBalances = useMemo(() => (balanceHistory?.data ?? []).slice(0, 10), [balanceHistory]);
@@ -407,7 +413,7 @@ export default function Portfolio() {
                   {(tradeHistory?.data ?? []).map((t) => (
                     <TableRow key={t.id}>
                       <TableCell>
-                        {new Date(t.executedAt).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}
+                        {formatDateToLocaleString(t.executedAt, undefined, { dateStyle: "medium", timeStyle: "short" })}
                       </TableCell>
                       <TableCell className="max-w-[220px]">{t.marketTitle}</TableCell>
                       <TableCell>{t.side === "yes" ? "YES" : "NO"}</TableCell>
@@ -472,7 +478,7 @@ export default function Portfolio() {
                 {recentBalances.map((tx) => (
                   <TableRow key={tx.id}>
                     <TableCell>
-                      {new Date(tx.createdAt).toLocaleDateString(undefined, { dateStyle: "medium" })}
+                      {formatDateToLocaleDateString(tx.createdAt, undefined, { dateStyle: "medium" })}
                     </TableCell>
                     <TableCell className="max-w-[240px]">{tx.description}</TableCell>
                     <TableCell className="text-right">
