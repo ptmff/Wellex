@@ -144,15 +144,14 @@ export class AnalyticsService {
     const cached = await analyticsCache.get<any[]>(cacheKey);
     if (cached) return cached;
 
-    const query = db('price_history')
-      .where('market_id', marketId)
-      .orderBy('recorded_at', 'asc');
+    // Build a filtered query once, and only apply ordering to the final
+    // non-aggregate selects. Postgres rejects `COUNT(*) ... ORDER BY ...`.
+    const baseQuery = db('price_history').where('market_id', marketId);
+    if (from) baseQuery.where('recorded_at', '>=', from);
+    if (to) baseQuery.where('recorded_at', '<=', to);
 
-    if (from) query.where('recorded_at', '>=', from);
-    if (to) query.where('recorded_at', '<=', to);
-
-    // Downsample if needed
-    const total = await query.clone().count('* as count').first();
+    // Downsample if needed.
+    const total = await baseQuery.clone().count({ count: '*' }).first();
     const totalCount = parseInt(String((total as any)?.count ?? 0), 10);
 
     let rows: any[];
@@ -176,7 +175,10 @@ export class AnalyticsService {
         [marketId, ...(from ? [from] : []), ...(to ? [to] : []), nth]
       ).then((r) => r.rows);
     } else {
-      rows = await query.select('yes_price', 'no_price', 'recorded_at');
+      rows = await baseQuery
+        .clone()
+        .orderBy('recorded_at', 'asc')
+        .select('yes_price', 'no_price', 'recorded_at');
     }
 
     const result = rows.map((row: any) => ({

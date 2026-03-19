@@ -1,16 +1,89 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Eye, Calendar, Tag, DollarSign, HelpCircle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { categories } from "@/lib/mock-data";
+import { useAuth } from "@/auth/AuthContext";
+import { useQuery } from "@tanstack/react-query";
+import { listMarkets, type BackendMarket, type CreateMarketInput, createMarket } from "@/api/markets";
+import { useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 
 export default function CreateMarket() {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("");
+  const [resolutionCriteria, setResolutionCriteria] = useState("");
+  const [categoryId, setCategoryId] = useState<string>("");
   const [endDate, setEndDate] = useState("");
   const [liquidity, setLiquidity] = useState("");
   const [preview, setPreview] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+
+  const { request } = useAuth();
+  const navigate = useNavigate();
+
+  const categoriesQuery = useQuery({
+    queryKey: ["markets-create-categories"],
+    queryFn: () =>
+      listMarkets(request, {
+        page: 1,
+        limit: 50,
+        status: "active",
+        sortBy: "created_at",
+        sortOrder: "desc",
+      }),
+    enabled: !!request,
+    staleTime: 60_000,
+  });
+
+  const categories = useMemo(() => {
+    const items = categoriesQuery.data?.data ?? [];
+    const map = new Map<string, { id: string; name: string }>();
+    for (const m of items as BackendMarket[]) {
+      if (!m.category) continue;
+      if (!map.has(m.category.id)) map.set(m.category.id, { id: m.category.id, name: m.category.name });
+    }
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [categoriesQuery.data]);
+
+  const selectedCategoryName = useMemo(() => categories.find((c) => c.id === categoryId)?.name ?? "", [categories, categoryId]);
+
+  const submit = async () => {
+    if (!title.trim()) return;
+    if (!description.trim()) return;
+    if (!resolutionCriteria.trim()) return;
+    if (!endDate) return;
+    if (!liquidity) return;
+
+    const initialLiquidity = Number(liquidity);
+    if (!Number.isFinite(initialLiquidity) || initialLiquidity <= 0) {
+      toast.error("Initial liquidity must be a positive number");
+      return;
+    }
+
+    // Convert `YYYY-MM-DD` from `<input type="date">` into a datetime string.
+    // We set time to the end of the day in the local timezone to reduce accidental "past" values.
+    const closesAt = new Date(`${endDate}T23:59:59`).toISOString();
+
+    const payload: CreateMarketInput = {
+      title: title.trim(),
+      description: description.trim(),
+      resolutionCriteria: resolutionCriteria.trim(),
+      categoryId: categoryId || undefined,
+      closesAt,
+      initialLiquidity,
+    };
+
+    try {
+      setSubmitting(true);
+      const created = await createMarket(request, payload);
+      navigate(`/market/${created.id}`);
+    } catch (err) {
+      const message = typeof (err as any)?.message === "string" ? (err as any).message : "Failed to create market";
+      toast.error(message);
+    } finally {
+      setSubmitting(false);
+    }
+  };
 
   return (
     <AppLayout>
@@ -55,13 +128,15 @@ export default function CreateMarket() {
                   <Tag className="h-3 w-3" /> Category
                 </label>
                 <select
-                  value={category}
-                  onChange={(e) => setCategory(e.target.value)}
+                  value={categoryId}
+                  onChange={(e) => setCategoryId(e.target.value)}
                   className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all appearance-none"
                 >
-                  <option value="">Select category</option>
-                  {categories.filter((c) => c !== "All").map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                  <option value="">Select category (optional)</option>
+                  {categories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
                   ))}
                 </select>
               </div>
@@ -76,6 +151,18 @@ export default function CreateMarket() {
                   className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
                 />
               </div>
+            </div>
+
+            {/* Resolution Criteria */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Resolution Criteria</label>
+              <textarea
+                value={resolutionCriteria}
+                onChange={(e) => setResolutionCriteria(e.target.value)}
+                placeholder="What exact rule resolves YES?"
+                rows={3}
+                className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all resize-none"
+              />
             </div>
 
             {/* Initial Liquidity */}
@@ -103,6 +190,12 @@ export default function CreateMarket() {
               <motion.button
                 whileTap={{ scale: 0.98 }}
                 className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
+                disabled={!title || !description || !resolutionCriteria || !endDate || !liquidity || submitting}
+                onClick={() => {
+                  // Keep the current flow: open preview first.
+                  // The actual submit is in the preview step.
+                  if (title && description && resolutionCriteria && endDate && liquidity) setPreview(true);
+                }}
               >
                 Create Market
               </motion.button>
@@ -114,12 +207,17 @@ export default function CreateMarket() {
             <div className="rounded-xl bg-card border border-border/50 p-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-                  {category || "Uncategorized"}
+                  {selectedCategoryName || "Uncategorized"}
                 </span>
               </div>
               <h2 className="text-xl font-bold mb-2">{title || "Untitled Market"}</h2>
               {description && (
                 <p className="text-sm text-muted-foreground mb-3">{description}</p>
+              )}
+              {resolutionCriteria && (
+                <p className="text-sm text-muted-foreground mb-3">
+                  <span className="font-medium text-foreground">Resolution:</span> {resolutionCriteria}
+                </p>
               )}
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span>Ends: {endDate || "TBD"}</span>
@@ -138,8 +236,10 @@ export default function CreateMarket() {
               <motion.button
                 whileTap={{ scale: 0.98 }}
                 className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
+                onClick={submit}
+                disabled={submitting}
               >
-                Submit Market
+                {submitting ? "Creating..." : "Submit Market"}
               </motion.button>
             </div>
           </div>

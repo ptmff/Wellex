@@ -1,18 +1,104 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { useAuth } from "@/auth/AuthContext";
+import { executeTrade, getTradeQuote, type TradeAction, type TradeExecuteInput, type TradeQuoteResponse, type TradeSide } from "@/api/trading";
 
 interface TradePanelProps {
-  probability: number;
+  marketId: string;
+  currentYesPrice: number; // 0..1
 }
 
-export function TradePanel({ probability }: TradePanelProps) {
+export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
+  const queryClient = useQueryClient();
+  const { request, user } = useAuth();
+
   const [side, setSide] = useState<"YES" | "NO">("YES");
   const [amount, setAmount] = useState("");
-  const [action, setAction] = useState<"buy" | "sell">("buy");
+  const [action, setAction] = useState<TradeAction>("buy");
+  const [maxSlippage, setMaxSlippage] = useState<number>(2);
 
-  const price = side === "YES" ? probability : 100 - probability;
-  const shares = amount ? Math.floor((parseFloat(amount) / price) * 100) : 0;
-  const potentialReturn = amount ? (shares * (100 - price) / 100).toFixed(2) : "0.00";
+  const sideApi: TradeSide = side === "YES" ? "yes" : "no";
+
+  const yesCents = useMemo(() => Math.round(currentYesPrice * 100), [currentYesPrice]);
+  const noCents = useMemo(() => Math.round((1 - currentYesPrice) * 100), [currentYesPrice]);
+
+  const parsedAmount = useMemo(() => {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    return n;
+  }, [amount]);
+
+  // Debounce to avoid hammering quote endpoint while typing.
+  const [debouncedAmount, setDebouncedAmount] = useState<number | undefined>(undefined);
+  useEffect(() => {
+    if (parsedAmount === undefined) {
+      setDebouncedAmount(undefined);
+      return;
+    }
+    const t = window.setTimeout(() => setDebouncedAmount(parsedAmount), 350);
+    return () => window.clearTimeout(t);
+  }, [parsedAmount]);
+
+  const quoteQuery = useQuery<TradeQuoteResponse>({
+    queryKey: ["trade-quote", marketId, sideApi, action, debouncedAmount],
+    enabled: !!marketId && !!request && !!debouncedAmount,
+    staleTime: 500,
+    retry: false,
+    keepPreviousData: true,
+    queryFn: async () => {
+      return getTradeQuote(request, marketId, {
+        side: sideApi,
+        action,
+        amount: debouncedAmount!,
+      });
+    },
+  });
+
+  const quote = quoteQuery.data;
+
+  const expectedPrice = quote?.averagePrice;
+
+  const isQuoteForCurrentAmount = useMemo(() => {
+    if (parsedAmount === undefined || debouncedAmount === undefined) return false;
+    return Math.abs(debouncedAmount - parsedAmount) < 1e-9;
+  }, [parsedAmount, debouncedAmount]);
+
+  const canTrade = !!marketId && !!request && !!user && parsedAmount !== undefined && quote !== undefined && isQuoteForCurrentAmount;
+
+  const tradeMutation = useMutation({
+    mutationFn: async () => {
+      if (!canTrade || expectedPrice === undefined || parsedAmount === undefined) return;
+
+      const payload: TradeExecuteInput = {
+        side: sideApi,
+        action,
+        amount: parsedAmount,
+        maxSlippage: Number.isFinite(maxSlippage) ? Math.max(0, Math.min(50, maxSlippage)) : 2,
+        expectedPrice,
+      };
+
+      return executeTrade(request, marketId, payload);
+    },
+    onSuccess: async (result) => {
+      if (!result) return;
+      toast.success(`Trade executed (avg price: ${Math.round(result.averagePrice * 100)}¢)`);
+
+      // Market-derived UI: refresh chart/stats and recent trades.
+      await queryClient.invalidateQueries({ queryKey: ["market", marketId] });
+      await queryClient.invalidateQueries({ queryKey: ["market-stats", marketId] });
+      await queryClient.invalidateQueries({ queryKey: ["market-price-line", marketId] });
+    },
+    onError: (err) => {
+      const maybeMessage = (err as { message?: unknown } | undefined)?.message;
+      const message = typeof maybeMessage === "string" ? maybeMessage : "Trade failed";
+      toast.error(message);
+    },
+  });
+
+  const amountLabel = action === "buy" ? "Amount ($)" : "Shares to sell";
+  const quickAmounts = action === "buy" ? [10, 25, 50, 100] : [1, 5, 10, 25];
 
   return (
     <div className="rounded-xl bg-card border border-border/50 p-4">
@@ -49,14 +135,14 @@ export function TradePanel({ probability }: TradePanelProps) {
                 : "bg-secondary text-muted-foreground hover:text-foreground border border-transparent"
             }`}
           >
-            {s} {s === "YES" ? `${probability}¢` : `${100 - probability}¢`}
+            {s} {s === "YES" ? `${yesCents}¢` : `${noCents}¢`}
           </button>
         ))}
       </div>
 
       {/* Amount input */}
       <div className="mb-4">
-        <label className="text-xs text-muted-foreground mb-1.5 block">Amount ($)</label>
+        <label className="text-xs text-muted-foreground mb-1.5 block">{amountLabel}</label>
         <input
           type="number"
           value={amount}
@@ -65,31 +151,57 @@ export function TradePanel({ probability }: TradePanelProps) {
           className="w-full bg-secondary rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
         />
         <div className="flex gap-2 mt-2">
-          {[10, 25, 50, 100].map((v) => (
+          {quickAmounts.map((v) => (
             <button
               key={v}
               onClick={() => setAmount(String(v))}
               className="flex-1 py-1 text-xs font-medium bg-secondary rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
-              ${v}
+              {action === "buy" ? `$${v}` : `${v}`}
             </button>
           ))}
         </div>
       </div>
 
+      {/* Slippage */}
+      <div className="mb-4">
+        <label className="text-xs text-muted-foreground mb-1.5 block">Max slippage (%)</label>
+        <input
+          type="number"
+          min={0}
+          max={50}
+          step={0.5}
+          value={maxSlippage}
+          onChange={(e) => setMaxSlippage(Number(e.target.value))}
+          className="w-full bg-secondary rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
+        />
+      </div>
+
       {/* Summary */}
       <div className="space-y-2 mb-4 text-xs">
         <div className="flex justify-between text-muted-foreground">
-          <span>Avg price</span>
-          <span className="text-foreground font-medium">{price}¢</span>
+          <span>Est. avg price</span>
+          <span className="text-foreground font-medium">
+            {quoteQuery.isLoading ? "…" : quote ? `${Math.round(quote.averagePrice * 100)}¢` : "—"}
+          </span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Est. shares</span>
-          <span className="text-foreground font-medium">{shares}</span>
+          <span>{action === "buy" ? "Est. shares" : "Est. shares sold"}</span>
+          <span className="text-foreground font-medium">
+            {quoteQuery.isLoading ? "…" : quote ? quote.shares.toFixed(4) : "—"}
+          </span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Potential return</span>
-          <span className="text-success font-medium">${potentialReturn}</span>
+          <span>{action === "buy" ? "Est. cost" : "Est. proceeds"}</span>
+          <span className="text-success font-medium">
+            {quoteQuery.isLoading ? "…" : quote ? `$${quote.totalCost.toFixed(2)}` : "—"}
+          </span>
+        </div>
+        <div className="flex justify-between text-muted-foreground">
+          <span>Price impact</span>
+          <span className="text-foreground font-medium">
+            {quoteQuery.isLoading ? "…" : quote ? `${quote.priceImpact.toFixed(2)}%` : "—"}
+          </span>
         </div>
       </div>
 
@@ -101,8 +213,16 @@ export function TradePanel({ probability }: TradePanelProps) {
             ? "bg-success text-success-foreground hover:brightness-110"
             : "bg-danger text-danger-foreground hover:brightness-110"
         }`}
+        disabled={!canTrade || quoteQuery.isFetching || tradeMutation.isPending}
+        onClick={() => {
+          if (!user) {
+            toast.error("Please login to trade.");
+            return;
+          }
+          tradeMutation.mutate();
+        }}
       >
-        {action === "buy" ? "Buy" : "Sell"} {side}
+        {tradeMutation.isPending ? "Submitting..." : action === "buy" ? "Buy" : "Sell"} {side}
       </motion.button>
     </div>
   );

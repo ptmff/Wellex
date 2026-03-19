@@ -1,24 +1,142 @@
+import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Clock, Users, TrendingUp, Droplets, Share2 } from "lucide-react";
 import { motion } from "framer-motion";
-import { markets, formatVolume } from "@/lib/mock-data";
+import { formatVolume } from "@/lib/mock-data";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PriceChart } from "@/components/PriceChart";
 import { TradePanel } from "@/components/TradePanel";
+import { useAuth } from "@/auth/AuthContext";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { getMarket, getMarketPriceLine, getMarketStats, updateMarketStatus, type BackendMarket, type MarketStats, type PriceLinePoint } from "@/api/markets";
+
+type RangeKey = "1D" | "1W" | "1M" | "All";
+
+function formatDateShort(iso: string) {
+  try {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  } catch {
+    return "TBD";
+  }
+}
+
+function formatRelativeTime(iso: string) {
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  if (!Number.isFinite(diffMs)) return "";
+  const minutes = Math.floor(diffMs / (60 * 1000));
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function priceLineToChartData(points: PriceLinePoint[]) {
+  return points.map((p) => ({
+    time: new Date(p.time * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    yes: Math.round(p.yesPrice * 100),
+    no: Math.round(p.noPrice * 100),
+  }));
+}
 
 export default function MarketDetail() {
   const { id } = useParams();
-  const market = markets.find((m) => m.id === id);
+  const marketId = id ?? "";
+  const { request, user } = useAuth();
+  const [range, setRange] = useState<RangeKey>("1M");
+  const queryClient = useQueryClient();
 
-  if (!market) {
+  const marketQuery = useQuery({
+    queryKey: ["market", marketId],
+    queryFn: () => getMarket(request, marketId),
+    enabled: !!marketId,
+  });
+
+  const statsQuery = useQuery({
+    queryKey: ["market-stats", marketId],
+    queryFn: () => getMarketStats(request, marketId),
+    enabled: !!marketId,
+  });
+
+  const chartQuery = useQuery({
+    queryKey: ["market-price-line", marketId, range],
+    queryFn: async () => {
+      const now = Date.now();
+      let from: number | undefined;
+      let to: number | undefined;
+      const seconds = (ms: number) => Math.floor(ms / 1000);
+
+      if (range === "1D") {
+        from = seconds(now - 1 * 24 * 60 * 60 * 1000);
+        to = seconds(now);
+      } else if (range === "1W") {
+        from = seconds(now - 7 * 24 * 60 * 60 * 1000);
+        to = seconds(now);
+      } else if (range === "1M") {
+        from = seconds(now - 30 * 24 * 60 * 60 * 1000);
+        to = seconds(now);
+      }
+
+      const points = await getMarketPriceLine(request, marketId, {
+        from,
+        to,
+        points: 200,
+      });
+      return priceLineToChartData(points);
+    },
+    enabled: !!marketId,
+    keepPreviousData: true,
+  });
+
+  const market: BackendMarket | undefined = marketQuery.data;
+  const stats: MarketStats | undefined = statsQuery.data;
+
+  const currentYesPrice01 = useMemo(() => {
+    return stats?.currentYesPrice ?? market?.prices.yes ?? 0.5;
+  }, [market?.prices.yes, stats?.currentYesPrice]);
+
+  const probabilityPct = useMemo(() => Math.round(currentYesPrice01 * 100), [currentYesPrice01]);
+
+  const probColor = probabilityPct >= 50 ? "text-success" : "text-danger";
+  const canModerate = user?.role === "moderator" || user?.role === "admin";
+
+  const nextModerationStatus = (() => {
+    if (!marketQuery.data) return undefined;
+    if (marketQuery.data.status === "active") return "paused" as const;
+    if (marketQuery.data.status === "paused") return "active" as const;
+    if (marketQuery.data.status === "pending") return "active" as const;
+    return undefined;
+  })();
+
+  const statusMutation = useMutation({
+    mutationFn: (status: "active" | "paused" | "cancelled") => updateMarketStatus(request, marketId, { status }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["market", marketId] });
+      queryClient.invalidateQueries({ queryKey: ["market-stats", marketId] });
+    },
+    onError: (err) => {
+      const message = typeof (err as any)?.message === "string" ? (err as any).message : "Failed to update market status";
+      toast.error(message);
+    },
+  });
+
+  if (marketQuery.isLoading) {
+    return (
+      <AppLayout>
+        <div className="text-center py-20 text-muted-foreground">Loading...</div>
+      </AppLayout>
+    );
+  }
+
+  if (!marketQuery.data) {
     return (
       <AppLayout>
         <div className="text-center py-20 text-muted-foreground">Market not found</div>
       </AppLayout>
     );
   }
-
-  const probColor = market.probability >= 50 ? "text-success" : "text-danger";
 
   return (
     <AppLayout>
@@ -38,9 +156,9 @@ export default function MarketDetail() {
             <div className="rounded-xl bg-card border border-border/50 p-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-                  {market.category}
+                  {market.category?.name ?? "Uncategorized"}
                 </span>
-                {market.trending && (
+                {market.isFeatured && (
                   <span className="text-[10px] font-medium text-primary flex items-center gap-0.5">
                     <TrendingUp className="h-3 w-3" /> Trending
                   </span>
@@ -51,22 +169,22 @@ export default function MarketDetail() {
 
               <div className="flex items-center gap-6 flex-wrap">
                 <div>
-                  <span className={`text-3xl font-bold ${probColor}`}>{market.probability}%</span>
+                  <span className={`text-3xl font-bold ${probColor}`}>{probabilityPct}%</span>
                   <span className="text-xs text-muted-foreground ml-1.5">chance</span>
                 </div>
 
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
-                    <TrendingUp className="h-3.5 w-3.5" /> {formatVolume(market.volume)}
+                    <TrendingUp className="h-3.5 w-3.5" /> {formatVolume(stats?.volume24h ?? market.stats.volume24h)}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Droplets className="h-3.5 w-3.5" /> {formatVolume(market.liquidity)}
+                    <Droplets className="h-3.5 w-3.5" /> {formatVolume(stats?.liquidityTotal ?? market.stats.liquidityTotal)}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Users className="h-3.5 w-3.5" /> {market.participants.toLocaleString()}
+                    <Users className="h-3.5 w-3.5" /> {stats?.uniqueTraders?.toLocaleString() ?? "—"}
                   </span>
                   <span className="flex items-center gap-1">
-                    <Clock className="h-3.5 w-3.5" /> {market.endDate}
+                    <Clock className="h-3.5 w-3.5" /> {formatDateShort(market.closesAt)}
                   </span>
                 </div>
 
@@ -81,13 +199,12 @@ export default function MarketDetail() {
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-semibold">Price History</h2>
                 <div className="flex gap-1">
-                  {["1D", "1W", "1M", "All"].map((t) => (
+                  {(["1D", "1W", "1M", "All"] as const).map((t) => (
                     <button
                       key={t}
+                      onClick={() => setRange(t)}
                       className={`px-2.5 py-1 text-[11px] rounded-md font-medium transition-colors ${
-                        t === "1M"
-                          ? "bg-accent text-foreground"
-                          : "text-muted-foreground hover:text-foreground"
+                        t === range ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       {t}
@@ -95,60 +212,108 @@ export default function MarketDetail() {
                   ))}
                 </div>
               </div>
-              <PriceChart data={market.priceHistory} />
+              {chartQuery.isLoading ? (
+                <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">Loading chart...</div>
+              ) : (
+                <PriceChart data={chartQuery.data ?? []} />
+              )}
             </div>
 
             {/* Activity */}
             <div className="rounded-xl bg-card border border-border/50 p-4">
               <h2 className="text-sm font-semibold mb-3">Recent Activity</h2>
               <div className="space-y-2">
-                {market.recentTrades.map((trade, i) => (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ delay: i * 0.05 }}
-                    className="flex items-center justify-between py-2 border-b border-border/30 last:border-0"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="h-7 w-7 rounded-full bg-secondary flex items-center justify-center text-xs font-medium text-muted-foreground">
-                        {trade.user.slice(0, 4)}
-                      </div>
-                      <div>
-                        <span className="text-xs text-muted-foreground">{trade.user}</span>
-                        <div className="flex items-center gap-1.5 text-xs">
-                          <span className="text-muted-foreground">bought</span>
-                          <span className={trade.side === "YES" ? "text-success font-medium" : "text-danger font-medium"}>
-                            {trade.side}
-                          </span>
-                          <span className="text-muted-foreground">at {trade.price}¢</span>
+                {statsQuery.isLoading ? (
+                  <div className="text-sm text-muted-foreground py-6 text-center">Loading...</div>
+                ) : stats?.recentTrades?.length ? (
+                  stats.recentTrades.map((trade, i) => {
+                    const side = String(trade.side).toLowerCase() === "yes" ? "YES" : "NO";
+                    const priceCents = Math.round(trade.price * 100);
+                    const amountUsd = trade.totalValue.toFixed(2);
+                    return (
+                      <motion.div
+                        key={trade.id ?? i}
+                        initial={{ opacity: 0, x: -8 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.05 }}
+                        className="flex items-center justify-between py-2 border-b border-border/30 last:border-0"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="h-7 w-7 rounded-full bg-secondary flex items-center justify-center text-xs font-medium text-muted-foreground">
+                            {side.slice(0, 2)}
+                          </div>
+                          <div>
+                            <div className="flex items-center gap-1.5 text-xs">
+                              <span className="text-muted-foreground">bought</span>
+                              <span className={side === "YES" ? "text-success font-medium" : "text-danger font-medium"}>
+                                {side}
+                              </span>
+                              <span className="text-muted-foreground">at {priceCents}¢</span>
+                            </div>
+                            <div className="text-[10px] text-muted-foreground mt-0.5">
+                              {formatRelativeTime(trade.executedAt)}
+                            </div>
+                          </div>
                         </div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-xs font-medium">${trade.amount}</div>
-                      <div className="text-[10px] text-muted-foreground">{trade.time}</div>
-                    </div>
-                  </motion.div>
-                ))}
+                        <div className="text-right">
+                          <div className="text-xs font-medium">${amountUsd}</div>
+                        </div>
+                      </motion.div>
+                    );
+                  })
+                ) : (
+                  <div className="text-sm text-muted-foreground py-6 text-center">No trades yet</div>
+                )}
               </div>
             </div>
           </div>
 
           {/* Sidebar - Trade */}
           <div className="space-y-4">
-            <TradePanel probability={market.probability} />
+            <TradePanel marketId={marketId} currentYesPrice={currentYesPrice01} />
+
+            {canModerate && nextModerationStatus && (
+              <div className="rounded-xl bg-card border border-border/50 p-4">
+                <h3 className="text-sm font-semibold mb-3">Market Status</h3>
+                <div className="space-y-2.5 text-xs">
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Current</span>
+                    <span className="font-medium">{market.status}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    {market.status === "active" ? (
+                      <button
+                        className="flex-1 py-2.5 rounded-lg text-sm font-semibold bg-secondary hover:bg-secondary/80 transition-colors"
+                        onClick={() => statusMutation.mutate("paused")}
+                        disabled={statusMutation.isPending}
+                      >
+                        Pause
+                      </button>
+                    ) : null}
+                    {market.status === "paused" || market.status === "pending" ? (
+                      <button
+                        className="flex-1 py-2.5 rounded-lg text-sm font-semibold bg-secondary hover:bg-secondary/80 transition-colors"
+                        onClick={() => statusMutation.mutate("active")}
+                        disabled={statusMutation.isPending}
+                      >
+                        Activate
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Market Stats */}
             <div className="rounded-xl bg-card border border-border/50 p-4">
               <h3 className="text-sm font-semibold mb-3">Market Info</h3>
               <div className="space-y-2.5 text-xs">
                 {[
-                  { label: "Volume", value: formatVolume(market.volume) },
-                  { label: "Liquidity", value: formatVolume(market.liquidity) },
-                  { label: "Participants", value: market.participants.toLocaleString() },
-                  { label: "End Date", value: market.endDate },
-                  { label: "Resolution", value: "Oracle" },
+                  { label: "Volume (24h)", value: formatVolume(stats?.volume24h ?? market.stats.volume24h) },
+                  { label: "Liquidity", value: formatVolume(stats?.liquidityTotal ?? market.stats.liquidityTotal) },
+                  { label: "Traders", value: stats?.uniqueTraders?.toLocaleString() ?? "—" },
+                  { label: "End Date", value: formatDateShort(market.closesAt) },
+                  { label: "Resolution", value: market.resolutionCriteria ? market.resolutionCriteria : "Oracle" },
                 ].map((item) => (
                   <div key={item.label} className="flex justify-between">
                     <span className="text-muted-foreground">{item.label}</span>
