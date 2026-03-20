@@ -18,7 +18,7 @@ export class PortfolioService {
     const cached = await portfolioCache.get(cacheKey);
     if (cached) return cached;
 
-    const [balance, positions, recentActivity] = await Promise.all([
+    const [balance, positions, recentActivity, realizedPnLRow] = await Promise.all([
       db('balances').where('user_id', userId).first(),
       this.getPositions(userId),
       db('trades')
@@ -26,32 +26,42 @@ export class PortfolioService {
         .orderBy('executed_at', 'desc')
         .limit(5)
         .select('*'),
+      db('balance_transactions')
+        .where('user_id', userId)
+        .whereIn('reference_type', ['trade', 'market_resolution'])
+        .whereIn('type', ['trade_credit', 'trade_debit', 'refund'])
+        .select(
+          db.raw(
+            `SUM(CASE WHEN type IN ('trade_credit','refund') THEN amount ELSE -amount END) as realized_pnl`
+          )
+        )
+        .first(),
     ]);
 
     if (!balance) throw new NotFoundError('Portfolio', userId);
 
     // Calculate unrealized PnL across all positions
     let totalUnrealizedPnl = new Decimal(0);
-    let totalRealizedPnl = new Decimal(0);
     let totalInvested = new Decimal(0);
 
     for (const pos of positions) {
       totalUnrealizedPnl = totalUnrealizedPnl.plus(pos.unrealizedPnl);
-      totalRealizedPnl = totalRealizedPnl.plus(pos.realizedPnl);
       totalInvested = totalInvested.plus(pos.totalInvested);
     }
 
+    const realizedCashPnL = new Decimal(realizedPnLRow?.realized_pnl ?? 0);
+
     const portfolio = {
       balance: {
-        available: parseFloat(balance.available),
-        reserved: parseFloat(balance.reserved),
-        total: parseFloat(balance.total),
+        available: parseFloat(String((balance.available_cash ?? balance.available) ?? 0)),
+        reserved: parseFloat(String((balance.reserved_cash ?? balance.reserved) ?? 0)),
+        total: parseFloat(String((new Decimal(balance.available_cash ?? balance.available)).plus(new Decimal(balance.reserved_cash ?? balance.reserved)))),
         currency: balance.currency,
       },
       pnl: {
-        realized: totalRealizedPnl.toNumber(),
+        realized: realizedCashPnL.toNumber(),
         unrealized: totalUnrealizedPnl.toNumber(),
-        total: totalRealizedPnl.plus(totalUnrealizedPnl).toNumber(),
+        total: realizedCashPnL.plus(totalUnrealizedPnl).toNumber(),
       },
       positions: {
         count: positions.length,
@@ -201,8 +211,7 @@ export class PortfolioService {
     const cached = await portfolioCache.get(cacheKey);
     if (cached) return cached;
 
-    const [positions, tradeStats, resolutionPayouts] = await Promise.all([
-      db('positions').where('user_id', userId).select('*'),
+    const [tradeStats, realizedFromTradesRow, resolutionPayoutsRow] = await Promise.all([
       db('trades')
         .where('buyer_id', userId)
         .select(
@@ -215,15 +224,23 @@ export class PortfolioService {
         )
         .first(),
       db('balance_transactions')
-        .where({ user_id: userId, type: 'trade_credit', reference_type: 'market_resolution' })
+        .where({ user_id: userId, reference_type: 'trade' })
+        .whereIn('type', ['trade_credit', 'trade_debit'])
+        .select(
+          db.raw(
+            `SUM(CASE WHEN type = 'trade_credit' THEN amount ELSE -amount END) as realized_from_trades`
+          )
+        )
+        .first(),
+      db('balance_transactions')
+        .where({ user_id: userId, reference_type: 'market_resolution' })
+        .whereIn('type', ['trade_credit', 'refund'])
         .sum('amount as total')
         .first(),
     ]);
 
-    const totalRealizedPnl = positions.reduce(
-      (sum: Decimal, p: any) => sum.plus(p.realized_pnl ?? 0),
-      new Decimal(0)
-    );
+    const realizedFromTrades = new Decimal(realizedFromTradesRow?.realized_from_trades ?? 0);
+    const resolutionPayouts = new Decimal(resolutionPayoutsRow?.total ?? 0);
 
     const summary = {
       trading: {
@@ -235,11 +252,9 @@ export class PortfolioService {
         noVolume: parseFloat(String((tradeStats as any)?.no_volume ?? 0)),
       },
       pnl: {
-        realizedFromTrades: totalRealizedPnl.toNumber(),
-        resolutionPayouts: parseFloat(String((resolutionPayouts as any)?.total ?? 0)),
-        totalRealized: totalRealizedPnl
-          .plus(parseFloat(String((resolutionPayouts as any)?.total ?? 0)))
-          .toNumber(),
+        realizedFromTrades: realizedFromTrades.toNumber(),
+        resolutionPayouts: resolutionPayouts.toNumber(),
+        totalRealized: realizedFromTrades.plus(resolutionPayouts).toNumber(),
       },
     };
 

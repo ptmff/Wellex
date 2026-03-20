@@ -116,7 +116,7 @@ export class UsersService {
     const [updated] = await db('users')
       .where('id', userId)
       .update(updates)
-      .returning('id', 'username', 'email', 'display_name', 'bio', 'avatar_url', 'preferences', 'role');
+      .returning(['id', 'username', 'email', 'display_name', 'bio', 'avatar_url', 'preferences', 'role']);
 
     await userCache.del(`user:${userId}`);
     await userCache.del(`profile:${updated.username}`);
@@ -144,7 +144,7 @@ export class UsersService {
     const [updated] = await db('users')
       .where('id', userId)
       .update({ username, updated_at: new Date() })
-      .returning('id', 'username');
+      .returning(['id', 'username']);
 
     await userCache.del(`user:${userId}`);
     return updated;

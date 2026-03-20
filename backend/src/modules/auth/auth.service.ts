@@ -107,6 +107,8 @@ export class AuthService {
         available: config.INITIAL_USER_BALANCE.toFixed(8),
         reserved: '0',
         total: config.INITIAL_USER_BALANCE.toFixed(8),
+        available_cash: config.INITIAL_USER_BALANCE.toFixed(8),
+        reserved_cash: '0',
         currency: 'USD',
       });
 

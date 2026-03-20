@@ -1,16 +1,14 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { LMSREngine } from './lmsr.engine';
 import { authenticate } from '../../common/guards';
-import { WebSocketService } from '../../infrastructure/websocket/ws.service';
-import { ActivityService } from '../activity/activity.service';
 import { tradeCounter, tradeVolume } from '../../infrastructure/metrics/prometheus';
+import { OrderBookService } from '../orders/orderbook.service';
 
 const router = Router();
 
 // Services are singletons injected at app level; here we access them via req.app.locals
-function getEngine(req: Request): LMSREngine {
-  return req.app.locals.lmsrEngine as LMSREngine;
+function getOrderBookService(req: Request): OrderBookService {
+  return req.app.locals.orderBookService as OrderBookService;
 }
 
 const TradeDto = z.object({
@@ -33,9 +31,9 @@ router.post(
   authenticate(),
   async (req: Request, res: Response) => {
     const validated = TradeDto.parse(req.body);
-    const engine = getEngine(req);
+    const service = getOrderBookService(req);
 
-    const result = await engine.executeTrade({
+    const result = await service.executeMarketTrade({
       userId: req.user!.id,
       marketId: req.params.marketId,
       ...validated,
@@ -54,9 +52,9 @@ router.post(
   '/:marketId/quote',
   async (req: Request, res: Response) => {
     const validated = QuoteDto.parse(req.body);
-    const engine = getEngine(req);
+    const service = getOrderBookService(req);
 
-    const quote = await engine.getQuote(
+    const quote = await service.getTradeQuote(
       req.params.marketId,
       validated.side,
       validated.action,

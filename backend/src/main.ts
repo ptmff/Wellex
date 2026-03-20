@@ -14,7 +14,6 @@ import { metricsMiddleware, getMetrics, getContentType } from './infrastructure/
 import { checkDatabaseConnection } from './database/connection';
 import { redisClient } from './infrastructure/redis/cache.service';
 import { WebSocketService } from './infrastructure/websocket/ws.service';
-import { LMSREngine } from './modules/trading/lmsr.engine';
 import { AnalyticsService } from './modules/analytics/analytics.service';
 import { ActivityService } from './modules/activity/activity.service';
 import { OrderBookService } from './modules/orders/orderbook.service';
@@ -43,11 +42,9 @@ async function bootstrap(): Promise<void> {
   const wsService = new WebSocketService();
   const activityService = new ActivityService();
   const analyticsService = new AnalyticsService();
-  const lmsrEngine = new LMSREngine(wsService, activityService);
   const orderBookService = new OrderBookService(wsService, activityService);
 
   app.locals.wsService = wsService;
-  app.locals.lmsrEngine = lmsrEngine;
   app.locals.analyticsService = analyticsService;
   app.locals.activityService = activityService;
   app.locals.orderBookService = orderBookService;

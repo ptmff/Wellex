@@ -4,6 +4,7 @@ import { db } from '../../database/connection';
 import { authenticate, requireRole } from '../../common/guards';
 import { marketCache, userCache } from '../../infrastructure/redis/cache.service';
 import { logger } from '../../common/logger';
+import { AppError, ErrorCode } from '../../common/errors';
 
 const router = Router();
 
@@ -46,14 +47,12 @@ router.get('/markets', async (req: Request, res: Response) => {
 // POST /api/v1/admin/markets/:id/resolve
 router.post('/markets/:id/resolve', async (req: Request, res: Response) => {
   const validated = ResolveMarketDto.parse(req.body);
-  const engine = req.app.locals.lmsrEngine;
+  const orderBookService = req.app.locals.orderBookService;
+  if (!orderBookService?.resolveMarket) {
+    throw new AppError(ErrorCode.INTERNAL_ERROR, 'Market resolution service is not available', 500);
+  }
 
-  const result = await engine.resolveMarket(
-    req.params.id,
-    validated.outcome,
-    req.user!.id,
-    validated.note
-  );
+  const result = await orderBookService.resolveMarket(req.params.id, validated.outcome, req.user!.id, validated.note);
 
   await marketCache.del(`market:${req.params.id}`);
   await marketCache.delPattern('list:*');

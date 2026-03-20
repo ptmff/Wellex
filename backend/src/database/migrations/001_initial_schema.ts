@@ -69,6 +69,24 @@ export async function runMigrations(): Promise<void> {
   });
 
   // ─────────────────────────────────────────────────────────────────
+  // CASH RESERVES (new columns; reserved shares are tracked in positions)
+  // ─────────────────────────────────────────────────────────────────
+  await db.schema.raw(`
+    ALTER TABLE balances
+    ADD COLUMN IF NOT EXISTS available_cash decimal(20, 8);
+  `);
+  await db.schema.raw(`
+    ALTER TABLE balances
+    ADD COLUMN IF NOT EXISTS reserved_cash decimal(20, 8);
+  `);
+  // Backfill for existing rows (best-effort)
+  await db.schema.raw(`
+    UPDATE balances
+    SET available_cash = COALESCE(available_cash, available),
+        reserved_cash = COALESCE(reserved_cash, reserved);
+  `);
+
+  // ─────────────────────────────────────────────────────────────────
   // BALANCE TRANSACTIONS (audit log)
   // ─────────────────────────────────────────────────────────────────
   await db.schema.createTableIfNotExists('balance_transactions', (t) => {
@@ -222,6 +240,9 @@ export async function runMigrations(): Promise<void> {
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
     t.enum('side', ['yes', 'no']).notNullable();
     t.decimal('quantity', 20, 8).notNullable().defaultTo(0);
+    // Shares locked by open LIMIT SELL orders.
+    // Invariant: available_shares + reserved_quantity = quantity
+    t.decimal('reserved_quantity', 20, 8).notNullable().defaultTo(0);
     t.decimal('average_price', 10, 8).notNullable().defaultTo(0); // WAP
     t.decimal('total_invested', 20, 8).notNullable().defaultTo(0);
     t.decimal('realized_pnl', 20, 8).notNullable().defaultTo(0);
@@ -235,6 +256,12 @@ export async function runMigrations(): Promise<void> {
     t.index(['market_id']);
     t.index(['user_id', 'market_id']);
   });
+
+  // Backfill reserved_quantity for existing rows (best-effort)
+  await db.schema.raw(`
+    ALTER TABLE positions
+    ADD COLUMN IF NOT EXISTS reserved_quantity decimal(20, 8) NOT NULL DEFAULT 0;
+  `);
 
   // ─────────────────────────────────────────────────────────────────
   // PRICE HISTORY (time-series)

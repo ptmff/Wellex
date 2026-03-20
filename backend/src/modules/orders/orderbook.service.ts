@@ -1,9 +1,9 @@
 /**
  * Order Book Service
  *
- * Manages limit orders and matches them against the LMSR AMM.
- * Strategy: hybrid — limit orders fill against each other first,
- * remainder fills against LMSR pool.
+ * Order book service:
+ * - supports resting LIMIT orders with order-to-order matching
+ * - supports MARKET trades as a taker (sweep across resting orders)
  *
  * Order lifecycle:
  *   pending → open → partially_filled / filled
@@ -14,7 +14,14 @@ import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { db, withTransaction, paginate } from '../../database/connection';
 import { CacheService } from '../../infrastructure/redis/cache.service';
-import { AppError, ErrorCode, NotFoundError, InsufficientBalanceError } from '../../common/errors';
+import {
+  AppError,
+  ErrorCode,
+  NotFoundError,
+  InsufficientBalanceError,
+  SlippageExceededError,
+} from '../../common/errors';
+import { config } from '../../config';
 import { logger } from '../../common/logger';
 import { WebSocketService } from '../../infrastructure/websocket/ws.service';
 import { ActivityService } from '../activity/activity.service';
@@ -106,42 +113,46 @@ export class OrderBookService {
       const quantity = new Decimal(validated.quantity);
 
       // Calculate order cost / collateral needed
-      let reserveAmount: Decimal;
+      let reserveCashAmount: Decimal = new Decimal(0);
+      let reserveCashFeeAmount: Decimal = new Decimal(0);
 
       if (validated.action === 'buy') {
-        // Buying: reserve price * quantity + fee
+        // BUY LIMIT:
+        // reserve_cash = qty * limitPrice + fee (fee is computed on qty*limitPrice)
         const cost = price.mul(quantity);
         const fee = cost.mul(this.FEE_RATE);
-        reserveAmount = cost.plus(fee);
+        reserveCashAmount = cost.plus(fee);
+        reserveCashFeeAmount = fee;
       } else {
-        // Selling: reserve shares (need to own them)
+        // SELL LIMIT:
+        // reserve_shares happens via positions.reserved_quantity.
         const position = await trx('positions')
           .where({ user_id: userId, market_id: marketId, side: validated.side })
+          .forUpdate()
           .first();
 
-        const available = new Decimal(position?.quantity ?? 0);
+        const ownedShares = new Decimal(position?.quantity ?? 0);
+        const reservedShares = new Decimal(position?.reserved_quantity ?? 0);
+        const availableShares = ownedShares.minus(reservedShares);
 
-        // Check existing sell orders
-        const existingSellOrders = await trx('orders')
-          .where({ user_id: userId, market_id: marketId, side: validated.side, action: 'sell' })
-          .whereIn('status', ['open', 'partially_filled'])
-          .sum('remaining_quantity as total')
-          .first();
-
-        const alreadyReserved = new Decimal((existingSellOrders as any)?.total ?? 0);
-        const availableToSell = available.minus(alreadyReserved);
-
-        if (availableToSell.lt(quantity)) {
+        if (availableShares.lt(quantity)) {
           throw new AppError(
             ErrorCode.INSUFFICIENT_SHARES,
-            `Insufficient shares: available ${availableToSell.toFixed(4)}, need ${quantity.toFixed(4)}`,
+            `Insufficient shares: available ${availableShares.toFixed(4)}, need ${quantity.toFixed(4)}`,
             400
           );
         }
-        reserveAmount = new Decimal(0); // Shares are the collateral, no USD needed
+
+        // Lock shares for the order; position.quantity is NOT reduced at this stage.
+        await trx('positions')
+          .where({ user_id: userId, market_id: marketId, side: validated.side })
+          .update({
+            reserved_quantity: trx.raw('reserved_quantity + ?', [quantity.toFixed(8)]),
+            updated_at: new Date(),
+          });
       }
 
-      // Reserve balance for buy orders
+      // Reserve cash for buy orders (cash reserves must be split from shares reserves)
       if (validated.action === 'buy') {
         const balance = await trx('balances')
           .where('user_id', userId)
@@ -150,16 +161,17 @@ export class OrderBookService {
 
         if (!balance) throw new NotFoundError('Balance');
 
-        const available = new Decimal(balance.available);
-        if (available.lt(reserveAmount)) {
-          throw new InsufficientBalanceError(available.toNumber(), reserveAmount.toNumber());
+        const availableCash = new Decimal(balance.available_cash ?? balance.available);
+        const reserveCash = reserveCashAmount;
+        if (availableCash.lt(reserveCash)) {
+          throw new InsufficientBalanceError(availableCash.toNumber(), reserveCash.toNumber());
         }
 
         await trx('balances')
           .where('user_id', userId)
           .update({
-            available: trx.raw('available - ?', [reserveAmount.toFixed(8)]),
-            reserved: trx.raw('reserved + ?', [reserveAmount.toFixed(8)]),
+            available_cash: trx.raw('available_cash - ?', [reserveCashAmount.toFixed(8)]),
+            reserved_cash: trx.raw('reserved_cash + ?', [reserveCashAmount.toFixed(8)]),
             updated_at: new Date(),
           });
       }
@@ -177,14 +189,15 @@ export class OrderBookService {
           quantity: quantity.toFixed(8),
           filled_quantity: '0',
           remaining_quantity: quantity.toFixed(8),
-          total_cost: reserveAmount.toFixed(8),
+          total_cost: reserveCashAmount.toFixed(8),
+          fee_amount: reserveCashFeeAmount.toFixed(8),
           expires_at: validated.expiresAt ? new Date(validated.expiresAt) : null,
           metadata: '{}',
         })
         .returning('*');
 
       // Attempt immediate matching
-      await this.matchOrders(trx, marketId, validated.side, validated.action);
+      await this.matchOrders(trx, marketId, order.id);
 
       // Invalidate order book cache
       await orderBookCache.del(`book:${marketId}`);
@@ -227,57 +240,92 @@ export class OrderBookService {
   private async matchOrders(
     trx: any,
     marketId: string,
-    side: 'yes' | 'no',
-    triggerAction: 'buy' | 'sell'
+    takerOrderId: string
   ): Promise<void> {
-    // Match buy orders against sell orders at crossing prices
-    // Bids sorted DESC by price (best bid first)
-    // Asks sorted ASC by price (best ask first)
+    // Maker price matching (order book):
+    // - taker BUY matches against best SELL makers (asks) with maker.price
+    // - taker SELL matches against best BUY makers (bids) with maker.price
+    const taker = await trx('orders')
+      .where('id', takerOrderId)
+      .forUpdate()
+      .first();
 
-    const openBuys = await trx('orders')
-      .where({ market_id: marketId, side, action: 'buy', type: 'limit' })
-      .whereIn('status', ['open', 'partially_filled'])
-      .orderBy('price', 'desc')  // Highest buyer first
-      .orderBy('created_at', 'asc') // FIFO for same price
-      .select('*');
+    if (!taker) return;
+    if (!['open', 'partially_filled'].includes(taker.status)) return;
 
-    const openSells = await trx('orders')
-      .where({ market_id: marketId, side, action: 'sell', type: 'limit' })
-      .whereIn('status', ['open', 'partially_filled'])
-      .orderBy('price', 'asc')  // Lowest seller first
+    const side = taker.side as 'yes' | 'no';
+    const takerAction = taker.action as 'buy' | 'sell';
+    const takerPrice = new Decimal(taker.price);
+
+    let takerRemaining = new Decimal(taker.remaining_quantity);
+    const EPS = new Decimal('0.0000001');
+
+    const makerQuery = trx('orders')
+      .where({ market_id: marketId, side, type: 'limit' })
+      .whereIn('status', ['open', 'partially_filled']);
+
+    // Makers depend on taker action.
+    if (takerAction === 'buy') {
+      // Cross if taker.price >= maker.sell.price
+      const makers = await makerQuery
+        .andWhere({ action: 'sell' })
+        .andWhere('price', '<=', takerPrice.toFixed(8))
+        .orderBy('price', 'asc')
+        .orderBy('created_at', 'asc')
+        .forUpdate()
+        .select('*');
+
+      for (const maker of makers) {
+        if (takerRemaining.lte(EPS)) break;
+        const makerRemaining = new Decimal(maker.remaining_quantity);
+        if (makerRemaining.lte(EPS)) continue;
+
+        const fillQty = Decimal.min(takerRemaining, makerRemaining);
+        const buyOrder = taker; // taker is the BUY
+        const sellOrder = maker; // maker is the SELL
+        const matchPrice = new Decimal(sellOrder.price); // maker price
+
+        await this.executeFill(trx, marketId, buyOrder, sellOrder, fillQty, matchPrice);
+
+        // Update local state for the next fill in this transaction.
+        buyOrder.filled_quantity = new Decimal(buyOrder.filled_quantity).plus(fillQty).toFixed(8);
+        buyOrder.remaining_quantity = new Decimal(buyOrder.remaining_quantity).minus(fillQty).toFixed(8);
+        sellOrder.filled_quantity = new Decimal(sellOrder.filled_quantity).plus(fillQty).toFixed(8);
+        sellOrder.remaining_quantity = new Decimal(sellOrder.remaining_quantity).minus(fillQty).toFixed(8);
+
+        takerRemaining = new Decimal(taker.remaining_quantity);
+      }
+      return;
+    }
+
+    // takerAction === 'sell'
+    // Cross if taker.price <= maker.buy.price
+    const makers = await makerQuery
+      .andWhere({ action: 'buy' })
+      .andWhere('price', '>=', takerPrice.toFixed(8))
+      .orderBy('price', 'desc')
       .orderBy('created_at', 'asc')
+      .forUpdate()
       .select('*');
 
-    let buyIdx = 0;
-    let sellIdx = 0;
+    for (const maker of makers) {
+      if (takerRemaining.lte(EPS)) break;
+      const makerRemaining = new Decimal(maker.remaining_quantity);
+      if (makerRemaining.lte(EPS)) continue;
 
-    while (buyIdx < openBuys.length && sellIdx < openSells.length) {
-      const buy = openBuys[buyIdx];
-      const sell = openSells[sellIdx];
+      const fillQty = Decimal.min(takerRemaining, makerRemaining);
+      const buyOrder = maker; // maker is the BUY
+      const sellOrder = taker; // taker is the SELL
+      const matchPrice = new Decimal(buyOrder.price); // maker price
 
-      const buyPrice = new Decimal(buy.price);
-      const sellPrice = new Decimal(sell.price);
+      await this.executeFill(trx, marketId, buyOrder, sellOrder, fillQty, matchPrice);
 
-      // No match possible
-      if (buyPrice.lt(sellPrice)) break;
+      buyOrder.filled_quantity = new Decimal(buyOrder.filled_quantity).plus(fillQty).toFixed(8);
+      buyOrder.remaining_quantity = new Decimal(buyOrder.remaining_quantity).minus(fillQty).toFixed(8);
+      sellOrder.filled_quantity = new Decimal(sellOrder.filled_quantity).plus(fillQty).toFixed(8);
+      sellOrder.remaining_quantity = new Decimal(sellOrder.remaining_quantity).minus(fillQty).toFixed(8);
 
-      // Match at midpoint or maker price (use sell price — maker is seller here)
-      const matchPrice = sellPrice;
-
-      const buyRemaining = new Decimal(buy.remaining_quantity);
-      const sellRemaining = new Decimal(sell.remaining_quantity);
-      const fillQty = Decimal.min(buyRemaining, sellRemaining);
-
-      await this.executeFill(trx, marketId, buy, sell, fillQty, matchPrice);
-
-      // Update local state for next iteration
-      buy.remaining_quantity = buyRemaining.minus(fillQty).toFixed(8);
-      sell.remaining_quantity = sellRemaining.minus(fillQty).toFixed(8);
-      buy.filled_quantity = new Decimal(buy.filled_quantity).plus(fillQty).toFixed(8);
-      sell.filled_quantity = new Decimal(sell.filled_quantity).plus(fillQty).toFixed(8);
-
-      if (new Decimal(buy.remaining_quantity).lte(0.000001)) buyIdx++;
-      if (new Decimal(sell.remaining_quantity).lte(0.000001)) sellIdx++;
+      takerRemaining = new Decimal(taker.remaining_quantity);
     }
   }
 
@@ -290,9 +338,25 @@ export class OrderBookService {
     matchPrice: Decimal
   ): Promise<void> {
     const totalValue = fillQty.mul(matchPrice);
-    const buyerFee = totalValue.mul(this.FEE_RATE);
-    const sellerFee = totalValue.mul(this.FEE_RATE);
-    const sellerReceives = totalValue.minus(sellerFee);
+    const fee = totalValue.mul(this.FEE_RATE); // fee on trade value (same for both sides)
+    const buyerFee = fee;
+    const sellerFee = fee;
+    const buyerCost = totalValue.plus(buyerFee); // qty * price + fee
+    const sellerReceives = totalValue.minus(sellerFee); // qty * price - fee
+    const platformFee = buyerFee.plus(sellerFee); // 2 * fee_rate * total_value
+
+    const market = await trx('markets').where('id', marketId).first();
+    const yesBefore = new Decimal(market.current_yes_price);
+    const noBefore = new Decimal(market.current_no_price);
+
+    // After-trade probabilities (price is always probability of the traded side)
+    const tradedSide = buyOrder.side as 'yes' | 'no';
+    const yesAfter = tradedSide === 'yes' ? matchPrice : new Decimal(1).minus(matchPrice);
+    const noAfter = tradedSide === 'yes' ? new Decimal(1).minus(matchPrice) : matchPrice;
+
+    const priceImpactPct = yesBefore.eq(0)
+      ? new Decimal(0)
+      : yesAfter.minus(yesBefore).abs().div(yesBefore).mul(100);
 
     // Create trade record
     const [trade] = await trx('trades')
@@ -302,24 +366,28 @@ export class OrderBookService {
         seller_id: sellOrder.user_id,
         buyer_order_id: buyOrder.id,
         seller_order_id: sellOrder.id,
-        side: buyOrder.side,
+        side: tradedSide,
         trade_type: 'order_book',
         price: matchPrice.toFixed(8),
         quantity: fillQty.toFixed(8),
         total_value: totalValue.toFixed(8),
-        fee: buyerFee.plus(sellerFee).toFixed(8),
-        yes_price_before: matchPrice.toFixed(8),
-        yes_price_after: matchPrice.toFixed(8),
-        price_impact: '0',
+        fee: platformFee.toFixed(8),
+        yes_price_before: yesBefore.toFixed(8),
+        yes_price_after: yesAfter.toFixed(8),
+        price_impact: priceImpactPct.toFixed(8),
         executed_at: new Date(),
         metadata: JSON.stringify({ orderBook: true }),
       })
       .returning('*');
 
-    // Update buyer order
+    // Update maker/taker orders' fill state
     const buyFilled = new Decimal(buyOrder.filled_quantity).plus(fillQty);
     const buyRemaining = new Decimal(buyOrder.remaining_quantity).minus(fillQty);
     const buyStatus = buyRemaining.lte(0.000001) ? 'filled' : 'partially_filled';
+
+    const sellFilled = new Decimal(sellOrder.filled_quantity).plus(fillQty);
+    const sellRemaining = new Decimal(sellOrder.remaining_quantity).minus(fillQty);
+    const sellStatus = sellRemaining.lte(0.000001) ? 'filled' : 'partially_filled';
 
     await trx('orders')
       .where('id', buyOrder.id)
@@ -327,16 +395,9 @@ export class OrderBookService {
         filled_quantity: buyFilled.toFixed(8),
         remaining_quantity: Decimal.max(0, buyRemaining).toFixed(8),
         status: buyStatus,
-        average_fill_price: buyFilled.gt(0)
-          ? new Decimal(buyOrder.total_cost ?? 0).div(buyFilled).toFixed(8)
-          : matchPrice.toFixed(8),
+        average_fill_price: matchPrice.toFixed(8),
         updated_at: new Date(),
       });
-
-    // Update seller order
-    const sellFilled = new Decimal(sellOrder.filled_quantity).plus(fillQty);
-    const sellRemaining = new Decimal(sellOrder.remaining_quantity).minus(fillQty);
-    const sellStatus = sellRemaining.lte(0.000001) ? 'filled' : 'partially_filled';
 
     await trx('orders')
       .where('id', sellOrder.id)
@@ -348,57 +409,70 @@ export class OrderBookService {
         updated_at: new Date(),
       });
 
-    // ── Transfer funds: buyer pays → seller receives
-    // Buyer already had funds reserved; release excess if partially filled
-    const buyerCostForFill = fillQty.mul(matchPrice).plus(buyerFee);
-    const buyerReservedForFill = fillQty.mul(new Decimal(buyOrder.price));
-    const buyerRefund = buyerReservedForFill.minus(buyerCostForFill);
-
-    // Credit buyer's position
+    // ── Positions first (shares state)
     await this.upsertPositionFill(trx, buyOrder.user_id, marketId, buyOrder.side, 'buy', fillQty, matchPrice);
+    await this.upsertPositionFill(trx, sellOrder.user_id, marketId, sellOrder.side, 'sell', fillQty, matchPrice);
 
-    // Debit buyer balance (refund overpaid if limit price > fill price)
-    if (buyerRefund.gt(0)) {
-      await trx('balances')
-        .where('user_id', buyOrder.user_id)
-        .update({
-          available: trx.raw('available + ?', [buyerRefund.toFixed(8)]),
-          reserved: trx.raw('reserved - ?', [buyerReservedForFill.toFixed(8)]),
-          updated_at: new Date(),
-        });
-    } else {
-      await trx('balances')
-        .where('user_id', buyOrder.user_id)
-        .update({
-          reserved: trx.raw('reserved - ?', [buyerReservedForFill.toFixed(8)]),
-          updated_at: new Date(),
-        });
-    }
+    // ── Cash state (cash reserves + available)
+    const feeAccount = await this.getFeeAccount(trx);
 
-    // Log buyer balance transaction
-    const buyerBalance = await trx('balances').where('user_id', buyOrder.user_id).first();
+    const buyerBalance = await trx('balances')
+      .where('user_id', buyOrder.user_id)
+      .forUpdate()
+      .first();
+    const buyerAvailBefore = new Decimal(buyerBalance.available_cash ?? buyerBalance.available);
+    const buyerResBefore = new Decimal(buyerBalance.reserved_cash ?? buyerBalance.reserved);
+    const buyerTotalBefore = buyerAvailBefore.plus(buyerResBefore);
+
+    // reserved_cash was computed at buyOrder.price, not matchPrice
+    const reservedCashForFill = fillQty
+      .mul(new Decimal(buyOrder.price))
+      .mul(new Decimal(1).plus(this.FEE_RATE));
+
+    const buyerRefund = Decimal.max(0, reservedCashForFill.minus(buyerCost));
+
+    const buyerAvailAfter = buyerAvailBefore.plus(buyerRefund);
+    const buyerResAfter = buyerResBefore.minus(reservedCashForFill);
+    const buyerTotalAfter = buyerAvailAfter.plus(buyerResAfter);
+
+    await trx('balances')
+      .where('user_id', buyOrder.user_id)
+      .update({
+        available_cash: trx.raw('available_cash + ?', [buyerRefund.toFixed(8)]),
+        reserved_cash: trx.raw('reserved_cash - ?', [reservedCashForFill.toFixed(8)]),
+        available: trx.raw('available + ?', [buyerRefund.toFixed(8)]),
+        reserved: trx.raw('reserved - ?', [reservedCashForFill.toFixed(8)]),
+        total: trx.raw('total - ?', [buyerCost.toFixed(8)]),
+        updated_at: new Date(),
+      });
+
     await trx('balance_transactions').insert({
       user_id: buyOrder.user_id,
       type: 'trade_debit',
-      amount: buyerCostForFill.toFixed(8),
-      balance_before: new Decimal(buyerBalance.available).plus(buyerCostForFill).toFixed(8),
-      balance_after: buyerBalance.available,
+      amount: buyerCost.toFixed(8),
+      balance_before: buyerTotalBefore.toFixed(8),
+      balance_after: buyerTotalAfter.toFixed(8),
       reference_type: 'trade',
       reference_id: trade.id,
-      description: `Limit order fill: bought ${fillQty.toFixed(4)} ${buyOrder.side.toUpperCase()} @ ${matchPrice.toFixed(4)}`,
+      description: `Limit fill: bought ${fillQty.toFixed(4)} ${tradedSide.toUpperCase()} @ ${matchPrice.toFixed(4)}`,
     });
-
-    // Credit seller
-    await this.upsertPositionFill(trx, sellOrder.user_id, marketId, sellOrder.side, 'sell', fillQty, matchPrice);
 
     const sellerBalance = await trx('balances')
       .where('user_id', sellOrder.user_id)
       .forUpdate()
       .first();
+    const sellerAvailBefore = new Decimal(sellerBalance.available_cash ?? sellerBalance.available);
+    const sellerResBefore = new Decimal(sellerBalance.reserved_cash ?? sellerBalance.reserved);
+    const sellerTotalBefore = sellerAvailBefore.plus(sellerResBefore);
+
+    const sellerAvailAfter = sellerAvailBefore.plus(sellerReceives);
+    const sellerResAfter = sellerResBefore;
+    const sellerTotalAfter = sellerAvailAfter.plus(sellerResAfter);
 
     await trx('balances')
       .where('user_id', sellOrder.user_id)
       .update({
+        available_cash: trx.raw('available_cash + ?', [sellerReceives.toFixed(8)]),
         available: trx.raw('available + ?', [sellerReceives.toFixed(8)]),
         total: trx.raw('total + ?', [sellerReceives.toFixed(8)]),
         updated_at: new Date(),
@@ -408,22 +482,68 @@ export class OrderBookService {
       user_id: sellOrder.user_id,
       type: 'trade_credit',
       amount: sellerReceives.toFixed(8),
-      balance_before: sellerBalance.available,
-      balance_after: new Decimal(sellerBalance.available).plus(sellerReceives).toFixed(8),
+      balance_before: sellerTotalBefore.toFixed(8),
+      balance_after: sellerTotalAfter.toFixed(8),
       reference_type: 'trade',
       reference_id: trade.id,
-      description: `Limit order fill: sold ${fillQty.toFixed(4)} ${sellOrder.side.toUpperCase()} @ ${matchPrice.toFixed(4)}`,
+      description: `Limit fill: sold ${fillQty.toFixed(4)} ${tradedSide.toUpperCase()} @ ${matchPrice.toFixed(4)}`,
     });
 
-    // Update market stats
+    // Credit platform fee sink so total cash doesn't disappear.
+    if (feeAccount) {
+      const platformBalance = await trx('balances')
+        .where('user_id', feeAccount.id)
+        .forUpdate()
+        .first();
+      const platformAvailBefore = new Decimal(platformBalance.available_cash ?? platformBalance.available);
+      const platformResBefore = new Decimal(platformBalance.reserved_cash ?? platformBalance.reserved);
+      const platformTotalBefore = platformAvailBefore.plus(platformResBefore);
+
+      const platformAvailAfter = platformAvailBefore.plus(platformFee);
+      const platformResAfter = platformResBefore;
+      const platformTotalAfter = platformAvailAfter.plus(platformResAfter);
+
+      await trx('balances')
+        .where('user_id', feeAccount.id)
+        .update({
+          available_cash: trx.raw('available_cash + ?', [platformFee.toFixed(8)]),
+          available: trx.raw('available + ?', [platformFee.toFixed(8)]),
+          total: trx.raw('total + ?', [platformFee.toFixed(8)]),
+          updated_at: new Date(),
+        });
+
+      await trx('balance_transactions').insert({
+        user_id: feeAccount.id,
+        type: 'fee',
+        amount: platformFee.toFixed(8),
+        balance_before: platformTotalBefore.toFixed(8),
+        balance_after: platformTotalAfter.toFixed(8),
+        reference_type: 'trade',
+        reference_id: trade.id,
+        description: `Platform fee collected for trade ${trade.id}`,
+      });
+    }
+
+    // Update market current prices + stats
     await trx('markets')
       .where('id', marketId)
       .update({
+        current_yes_price: yesAfter.toFixed(8),
+        current_no_price: noAfter.toFixed(8),
         volume_24h: trx.raw('volume_24h + ?', [totalValue.toFixed(8)]),
         volume_total: trx.raw('volume_total + ?', [totalValue.toFixed(8)]),
         trade_count: trx.raw('trade_count + 1'),
         updated_at: new Date(),
       });
+
+    await trx('price_history').insert({
+      market_id: marketId,
+      yes_price: yesAfter.toFixed(8),
+      no_price: noAfter.toFixed(8),
+      volume: totalValue.toFixed(8),
+      trade_count: 1,
+      recorded_at: new Date(),
+    });
 
     logger.debug('Order book fill executed', {
       tradeId: trade.id,
@@ -432,6 +552,14 @@ export class OrderBookService {
       qty: fillQty.toFixed(4),
       price: matchPrice.toFixed(4),
     });
+  }
+
+  private async getFeeAccount(trx: any): Promise<{ id: string } | null> {
+    const feeAccount = await trx('users')
+      .where('username', 'exchange')
+      .select('id')
+      .first();
+    return feeAccount ?? null;
   }
 
   private async upsertPositionFill(
@@ -445,6 +573,7 @@ export class OrderBookService {
   ): Promise<void> {
     const existing = await trx('positions')
       .where({ user_id: userId, market_id: marketId, side })
+      .forUpdate()
       .first();
 
     if (action === 'buy') {
@@ -454,45 +583,1057 @@ export class OrderBookService {
           market_id: marketId,
           side,
           quantity: qty.toFixed(8),
-          average_price: price.toFixed(8),
-          total_invested: qty.mul(price).toFixed(8),
+          reserved_quantity: '0',
+          average_price: price.toFixed(8), // entry for UI
+          // Net spend includes the buyer-side fee immediately.
+          total_invested: qty.mul(price).mul(new Decimal(1).plus(this.FEE_RATE)).toFixed(8),
+          realized_pnl: '0',
+          unrealized_pnl: '0',
           trade_count: 1,
           last_trade_at: new Date(),
         });
-      } else {
-        const newQty = new Decimal(existing.quantity).plus(qty);
-        const newInvested = new Decimal(existing.total_invested).plus(qty.mul(price));
-        await trx('positions')
-          .where({ user_id: userId, market_id: marketId, side })
-          .update({
-            quantity: newQty.toFixed(8),
-            average_price: newInvested.div(newQty).toFixed(8),
-            total_invested: newInvested.toFixed(8),
-            trade_count: trx.raw('trade_count + 1'),
-            last_trade_at: new Date(),
-            updated_at: new Date(),
-          });
+        return;
       }
-    } else {
-      // Sell: reduce position, calculate realized PnL
-      if (existing) {
-        const currentQty = new Decimal(existing.quantity);
-        const avgPrice = new Decimal(existing.average_price);
-        const newQty = currentQty.minus(qty);
-        const realizedPnl = price.minus(avgPrice).mul(qty);
 
+      const existingQty = new Decimal(existing.quantity);
+      const existingAvg = new Decimal(existing.average_price);
+      const existingReserved = new Decimal(existing.reserved_quantity ?? 0);
+
+      const newQty = existingQty.plus(qty);
+      const newAvg = existingQty.eq(0)
+        ? price
+        : existingAvg.mul(existingQty).plus(price.mul(qty)).div(newQty);
+
+      await trx('positions')
+        .where({ user_id: userId, market_id: marketId, side })
+        .update({
+          quantity: newQty.toFixed(8),
+          // Buying increases total shares; it doesn't free/lock shares.
+          reserved_quantity: existingReserved.toFixed(8),
+          average_price: newAvg.toFixed(8),
+          total_invested: newAvg.mul(newQty).mul(new Decimal(1).plus(this.FEE_RATE)).toFixed(8),
+          trade_count: trx.raw('trade_count + 1'),
+          last_trade_at: new Date(),
+          updated_at: new Date(),
+        });
+      return;
+    }
+
+    // SELL fill:
+    // - reduce total shares (positions.quantity) by qty
+    // - reduce reserved shares (positions.reserved_quantity) by qty
+    if (!existing) {
+      throw new AppError(ErrorCode.INSUFFICIENT_SHARES, 'Missing position for sell fill', 400);
+    }
+
+    const currentQty = new Decimal(existing.quantity);
+    const currentReserved = new Decimal(existing.reserved_quantity ?? 0);
+    if (currentReserved.lt(qty)) {
+      throw new AppError(
+        ErrorCode.INSUFFICIENT_SHARES,
+        `Insufficient reserved shares: reserved ${currentReserved.toFixed(4)}, need ${qty.toFixed(4)}`,
+        400
+      );
+    }
+
+    const newQty = currentQty.minus(qty);
+    const newReserved = currentReserved.minus(qty);
+
+    const avgPrice = new Decimal(existing.average_price);
+
+    await trx('positions')
+      .where({ user_id: userId, market_id: marketId, side })
+      .update({
+        quantity: Decimal.max(0, newQty).toFixed(8),
+        reserved_quantity: Decimal.max(0, newReserved).toFixed(8),
+        average_price: newQty.lte(0) ? '0' : avgPrice.toFixed(8),
+        total_invested: newQty.lte(0) ? '0' : avgPrice.mul(newQty).mul(new Decimal(1).plus(this.FEE_RATE)).toFixed(8),
+        trade_count: trx.raw('trade_count + 1'),
+        last_trade_at: new Date(),
+        updated_at: new Date(),
+      });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // MARKET TRADES (taker against resting limit orders)
+  // ─────────────────────────────────────────────────────────────────
+
+  async getTradeQuote(
+    marketId: string,
+    side: 'yes' | 'no',
+    action: 'buy' | 'sell',
+    amount: number
+  ): Promise<{
+    shares: number;
+    totalCost: number;
+    averagePrice: number;
+    priceImpact: number;
+    fee: number;
+    priceAfter: number;
+  }> {
+    const market = await db('markets').where('id', marketId).first();
+    if (!market) throw new NotFoundError('Market', marketId);
+    if (market.status !== 'active') throw new AppError(ErrorCode.MARKET_INACTIVE, `Market is ${market.status}`, 400);
+    if (new Date(market.closes_at) <= new Date()) throw new AppError(ErrorCode.MARKET_CLOSED, 'Market has closed', 400);
+
+    const feeRate = this.FEE_RATE;
+    const yesBefore = new Decimal(market.current_yes_price);
+    const noBefore = new Decimal(market.current_no_price);
+
+    // Read-only sweep across the book.
+    if (action === 'buy') {
+      // amount is USD budget that includes fees (like the existing frontend contract)
+      const budget = new Decimal(amount);
+      const makers = await db('orders')
+        .where({ market_id: marketId, side, action: 'sell', type: 'limit' })
+        .whereIn('status', ['open', 'partially_filled'])
+        .orderBy('price', 'asc')
+        .orderBy('created_at', 'asc')
+        .select('*');
+
+      let cashRemaining = budget;
+      let totalShares = new Decimal(0);
+      let totalTradeValue = new Decimal(0);
+      let totalUserFee = new Decimal(0);
+
+      const EPS = new Decimal('0.0000001');
+      for (const maker of makers) {
+        if (cashRemaining.lte(EPS)) break;
+        const makerPrice = new Decimal(maker.price);
+        const makerRemaining = new Decimal(maker.remaining_quantity);
+        if (makerRemaining.lte(EPS)) continue;
+
+        const maxQty = cashRemaining.div(makerPrice.mul(new Decimal(1).plus(feeRate)));
+        const fillQty = Decimal.min(makerRemaining, maxQty);
+        if (fillQty.lte(EPS)) continue;
+
+        const tradeValue = fillQty.mul(makerPrice);
+        const userFee = tradeValue.mul(feeRate); // buyer pays fee
+
+        const cost = tradeValue.plus(userFee);
+        if (cost.gt(cashRemaining)) break;
+
+        cashRemaining = cashRemaining.minus(cost);
+        totalShares = totalShares.plus(fillQty);
+        totalTradeValue = totalTradeValue.plus(tradeValue);
+        totalUserFee = totalUserFee.plus(userFee);
+      }
+
+      if (totalShares.lte(EPS)) {
+        throw new AppError(ErrorCode.INVALID_TRADE_AMOUNT, 'No enough liquidity to execute market buy', 400);
+      }
+
+      const averagePrice = totalTradeValue.div(totalShares);
+      const tradedSide = side;
+      const yesAfter = tradedSide === 'yes' ? averagePrice : new Decimal(1).minus(averagePrice);
+      const noAfter = tradedSide === 'yes' ? new Decimal(1).minus(averagePrice) : averagePrice;
+      const priceImpact = yesBefore.eq(0) ? new Decimal(0) : yesAfter.minus(yesBefore).abs().div(yesBefore).mul(100);
+
+      return {
+        shares: totalShares.toNumber(),
+        totalCost: budget.minus(cashRemaining).toNumber(),
+        averagePrice: averagePrice.toNumber(),
+        priceImpact: priceImpact.toNumber(),
+        fee: totalUserFee.toNumber(),
+        priceAfter: (side === 'yes' ? yesAfter : noAfter).toNumber(),
+      };
+    }
+
+    // action === 'sell': amount is shares to sell
+    const sharesToSell = new Decimal(amount);
+    const makers = await db('orders')
+      .where({ market_id: marketId, side, action: 'buy', type: 'limit' })
+      .whereIn('status', ['open', 'partially_filled'])
+      .orderBy('price', 'desc')
+      .orderBy('created_at', 'asc')
+      .select('*');
+
+    let remainingShares = sharesToSell;
+    let totalShares = new Decimal(0);
+    let totalTradeValue = new Decimal(0);
+    let totalUserFee = new Decimal(0);
+
+    const EPS = new Decimal('0.0000001');
+    for (const maker of makers) {
+      if (remainingShares.lte(EPS)) break;
+      const makerPrice = new Decimal(maker.price);
+      const makerRemaining = new Decimal(maker.remaining_quantity);
+      if (makerRemaining.lte(EPS)) continue;
+
+      const fillQty = Decimal.min(remainingShares, makerRemaining);
+      if (fillQty.lte(EPS)) continue;
+
+      const tradeValue = fillQty.mul(makerPrice);
+      const userFee = tradeValue.mul(feeRate); // seller fee
+      const proceeds = tradeValue.minus(userFee);
+
+      totalShares = totalShares.plus(fillQty);
+      totalTradeValue = totalTradeValue.plus(tradeValue);
+      totalUserFee = totalUserFee.plus(userFee);
+
+      remainingShares = remainingShares.minus(fillQty);
+      // If market buy maker orders are insufficient, we stop at book exhaustion.
+      // proceeds is computed below from totals.
+      void proceeds;
+    }
+
+    if (totalShares.lte(EPS)) {
+      throw new AppError(ErrorCode.INVALID_TRADE_AMOUNT, 'No enough liquidity to execute market sell', 400);
+    }
+
+    const averagePrice = totalTradeValue.div(totalShares);
+    const tradedSide = side;
+    const yesAfter = tradedSide === 'yes' ? averagePrice : new Decimal(1).minus(averagePrice);
+    const priceImpact = yesBefore.eq(0) ? new Decimal(0) : yesAfter.minus(yesBefore).abs().div(yesBefore).mul(100);
+    const totalValue = totalTradeValue;
+    const totalProceeds = totalValue.minus(totalUserFee);
+
+    return {
+      shares: totalShares.toNumber(),
+      totalCost: totalProceeds.toNumber(),
+      averagePrice: averagePrice.toNumber(),
+      priceImpact: priceImpact.toNumber(),
+      fee: totalUserFee.toNumber(),
+      priceAfter: (side === 'yes' ? yesAfter : new Decimal(1).minus(yesAfter)).toNumber(),
+    };
+  }
+
+  async executeMarketTrade(
+    params: {
+      userId: string;
+      marketId: string;
+      side: 'yes' | 'no';
+      action: 'buy' | 'sell';
+      amount: number; // USD for buy (budget), shares for sell
+      maxSlippage?: number;
+      expectedPrice?: number;
+    }
+  ): Promise<{
+    tradeId: string;
+    sharesTransacted: number;
+    totalCost: number;
+    averagePrice: number;
+    priceImpact: number;
+    yesPriceBefore: number;
+    yesPriceAfter: number;
+    fee: number;
+    newBalance: number;
+  }> {
+    const { userId, marketId, side, action, amount, maxSlippage = 5, expectedPrice } = params;
+
+    if (amount < config.MIN_TRADE_AMOUNT) {
+      throw new AppError(ErrorCode.MIN_TRADE_AMOUNT, `Minimum trade amount is ${config.MIN_TRADE_AMOUNT}`, 400);
+    }
+    if (amount > config.MAX_TRADE_AMOUNT) {
+      throw new AppError(ErrorCode.MAX_TRADE_AMOUNT, `Maximum trade amount is ${config.MAX_TRADE_AMOUNT}`, 400);
+    }
+
+    return withTransaction(async (trx) => {
+      const market = await trx('markets').where('id', marketId).forUpdate().first();
+      if (!market) throw new AppError(ErrorCode.MARKET_NOT_FOUND, 'Market not found', 404);
+      if (market.status !== 'active') throw new AppError(ErrorCode.MARKET_INACTIVE, `Market is ${market.status}`, 400);
+      if (new Date(market.closes_at) <= new Date()) throw new AppError(ErrorCode.MARKET_CLOSED, 'Market has closed', 400);
+
+      const yesBefore = new Decimal(market.current_yes_price);
+      const noBefore = new Decimal(market.current_no_price);
+
+      const feeRate = this.FEE_RATE;
+      const EPS = new Decimal('0.0000001');
+      const feeAccount = await this.getFeeAccount(trx);
+
+      const buyerUserId = userId;
+      const sellerUserId = userId;
+
+      let totalShares = new Decimal(0);
+      let totalTradeValue = new Decimal(0);
+      let totalUserFee = new Decimal(0);
+      let totalCost = new Decimal(0); // buyer cost (buy) or seller proceeds (sell)
+
+      let tradedSide: 'yes' | 'no' = side;
+
+      if (action === 'buy') {
+        const budget = new Decimal(amount);
+        const balance = await trx('balances').where('user_id', userId).forUpdate().first();
+        const availableCash = new Decimal(balance.available_cash ?? balance.available);
+        if (availableCash.lt(budget)) {
+          throw new InsufficientBalanceError(availableCash.toNumber(), budget.toNumber());
+        }
+
+        let cashRemaining = budget;
+
+        const makers = await trx('orders')
+          .where({ market_id: marketId, side, action: 'sell', type: 'limit' })
+          .whereIn('status', ['open', 'partially_filled'])
+          .orderBy('price', 'asc')
+          .orderBy('created_at', 'asc')
+          .forUpdate()
+          .select('*');
+
+        for (const maker of makers) {
+          if (cashRemaining.lte(EPS)) break;
+          const makerPrice = new Decimal(maker.price);
+          const makerRemaining = new Decimal(maker.remaining_quantity);
+          if (makerRemaining.lte(EPS)) continue;
+
+          const maxQty = cashRemaining.div(makerPrice.mul(new Decimal(1).plus(feeRate)));
+          const fillQty = Decimal.min(makerRemaining, maxQty);
+          if (fillQty.lte(EPS)) continue;
+
+          const tradeValue = fillQty.mul(makerPrice);
+          const userFee = tradeValue.mul(feeRate);
+          const cost = tradeValue.plus(userFee); // buyer pays including fee
+          if (cost.gt(cashRemaining)) break;
+
+          // Update resting sell order state
+          const makerFilled = new Decimal(maker.filled_quantity).plus(fillQty);
+          const makerRemainingAfter = makerRemaining.minus(fillQty);
+          const makerStatus = makerRemainingAfter.lte(EPS) ? 'filled' : 'partially_filled';
+          await trx('orders')
+            .where('id', maker.id)
+            .update({
+              filled_quantity: makerFilled.toFixed(8),
+              remaining_quantity: makerRemainingAfter.toFixed(8),
+              status: makerStatus,
+              average_fill_price: makerPrice.toFixed(8),
+              updated_at: new Date(),
+            });
+
+          // Positions: buyer gets shares, maker seller reduces reserved shares.
+          await this.upsertPositionFill(trx, userId, marketId, side, 'buy', fillQty, makerPrice);
+          await this.upsertPositionFill(trx, maker.user_id, marketId, side, 'sell', fillQty, makerPrice);
+
+          // Cash: debit buyer from available_cash, credit seller, credit platform fee sink.
+          const buyerBalance = await trx('balances').where('user_id', userId).forUpdate().first();
+          const buyerAvailBefore = new Decimal(buyerBalance.available_cash ?? buyerBalance.available);
+          const buyerTotalBefore = buyerAvailBefore.plus(new Decimal(buyerBalance.reserved_cash ?? buyerBalance.reserved));
+
+          await trx('balances')
+            .where('user_id', userId)
+            .update({
+              available_cash: trx.raw('available_cash - ?', [cost.toFixed(8)]),
+              available: trx.raw('available - ?', [cost.toFixed(8)]),
+              total: trx.raw('total - ?', [cost.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          const sellerProceeds = tradeValue.minus(tradeValue.mul(feeRate));
+          const sellerBalance = await trx('balances').where('user_id', maker.user_id).forUpdate().first();
+          const sellerAvailBefore = new Decimal(sellerBalance.available_cash ?? sellerBalance.available);
+          const sellerResBefore = new Decimal(sellerBalance.reserved_cash ?? sellerBalance.reserved);
+          const sellerTotalBefore = sellerAvailBefore.plus(sellerResBefore);
+
+          await trx('balances')
+            .where('user_id', maker.user_id)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [sellerProceeds.toFixed(8)]),
+              available: trx.raw('available + ?', [sellerProceeds.toFixed(8)]),
+              total: trx.raw('total + ?', [sellerProceeds.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          const platformFee = tradeValue.mul(feeRate).mul(2); // buyerFee + sellerFee
+          if (feeAccount) {
+            const platformBalance = await trx('balances').where('user_id', feeAccount.id).forUpdate().first();
+            await trx('balances')
+              .where('user_id', feeAccount.id)
+              .update({
+                available_cash: trx.raw('available_cash + ?', [platformFee.toFixed(8)]),
+                available: trx.raw('available + ?', [platformFee.toFixed(8)]),
+                total: trx.raw('total + ?', [platformFee.toFixed(8)]),
+                updated_at: new Date(),
+              });
+          }
+
+          // Trade record + balance transactions
+          const platformSellerFee = tradeValue.mul(feeRate);
+          const feeTotalForTrade = platformFee;
+
+          const marketNow = await trx('markets').where('id', marketId).first();
+          const yesBeforeFill = new Decimal(marketNow.current_yes_price);
+          const yesAfterFill = side === 'yes' ? makerPrice : new Decimal(1).minus(makerPrice);
+          const noAfterFill = side === 'yes' ? new Decimal(1).minus(makerPrice) : makerPrice;
+          const priceImpact = yesBeforeFill.eq(0) ? new Decimal(0) : yesAfterFill.minus(yesBeforeFill).abs().div(yesBeforeFill).mul(100);
+
+          const [tradeRow] = await trx('trades')
+            .insert({
+              market_id: marketId,
+              buyer_id: userId,
+              seller_id: maker.user_id,
+              buyer_order_id: null,
+              seller_order_id: maker.id,
+              side: side,
+              trade_type: 'order_book',
+              price: makerPrice.toFixed(8),
+              quantity: fillQty.toFixed(8),
+              total_value: tradeValue.toFixed(8),
+              fee: feeTotalForTrade.toFixed(8),
+              yes_price_before: yesBeforeFill.toFixed(8),
+              yes_price_after: yesAfterFill.toFixed(8),
+              price_impact: priceImpact.toFixed(8),
+              executed_at: new Date(),
+              metadata: JSON.stringify({ orderBook: true, taker: true }),
+            })
+            .returning('*');
+
+          const buyerBalanceAfter = await trx('balances').where('user_id', userId).first();
+          const buyerTotalAfter = new Decimal(buyerBalanceAfter.available_cash ?? buyerBalanceAfter.available)
+            .plus(new Decimal(buyerBalanceAfter.reserved_cash ?? buyerBalanceAfter.reserved));
+          await trx('balance_transactions').insert({
+            user_id: userId,
+            type: 'trade_debit',
+            amount: cost.toFixed(8),
+            balance_before: buyerTotalBefore.toFixed(8),
+            balance_after: buyerTotalAfter.toFixed(8),
+            reference_type: 'trade',
+            reference_id: tradeRow.id,
+            description: `Market fill: bought ${fillQty.toFixed(4)} ${side.toUpperCase()} @ ${makerPrice.toFixed(4)}`,
+          });
+
+          const sellerBalanceAfter = await trx('balances').where('user_id', maker.user_id).first();
+          const sellerTotalAfter = new Decimal(sellerBalanceAfter.available_cash ?? sellerBalanceAfter.available)
+            .plus(new Decimal(sellerBalanceAfter.reserved_cash ?? sellerBalanceAfter.reserved));
+          await trx('balance_transactions').insert({
+            user_id: maker.user_id,
+            type: 'trade_credit',
+            amount: sellerProceeds.toFixed(8),
+            balance_before: sellerTotalBefore.toFixed(8),
+            balance_after: sellerTotalAfter.toFixed(8),
+            reference_type: 'trade',
+            reference_id: tradeRow.id,
+            description: `Market fill: sold ${fillQty.toFixed(4)} ${side.toUpperCase()} @ ${makerPrice.toFixed(4)}`,
+          });
+
+          if (feeAccount) {
+            const platformBalanceAfter = await trx('balances').where('user_id', feeAccount.id).first();
+            const platformTotalAfter = new Decimal(platformBalanceAfter.available_cash ?? platformBalanceAfter.available)
+              .plus(new Decimal(platformBalanceAfter.reserved_cash ?? platformBalanceAfter.reserved));
+            // platform fee account balance_before can be computed by subtracting platformFee from after
+            await trx('balance_transactions').insert({
+              user_id: feeAccount.id,
+              type: 'fee',
+              amount: platformFee.toFixed(8),
+              balance_before: platformTotalAfter.minus(platformFee).toFixed(8),
+              balance_after: platformTotalAfter.toFixed(8),
+              reference_type: 'trade',
+              reference_id: tradeRow.id,
+              description: `Platform fee collected for market trade ${tradeRow.id}`,
+            });
+          }
+
+          // Update market prices and market stats
+          await trx('markets')
+            .where('id', marketId)
+            .update({
+              current_yes_price: yesAfterFill.toFixed(8),
+              current_no_price: noAfterFill.toFixed(8),
+              volume_24h: trx.raw('volume_24h + ?', [tradeValue.toFixed(8)]),
+              volume_total: trx.raw('volume_total + ?', [tradeValue.toFixed(8)]),
+              trade_count: trx.raw('trade_count + 1'),
+              updated_at: new Date(),
+            });
+          await trx('price_history').insert({
+            market_id: marketId,
+            yes_price: yesAfterFill.toFixed(8),
+            no_price: noAfterFill.toFixed(8),
+            volume: tradeValue.toFixed(8),
+            trade_count: 1,
+            recorded_at: new Date(),
+          });
+
+          // Accumulators
+          cashRemaining = cashRemaining.minus(cost);
+          totalShares = totalShares.plus(fillQty);
+          totalTradeValue = totalTradeValue.plus(tradeValue);
+          totalUserFee = totalUserFee.plus(userFee);
+          totalCost = totalCost.plus(cost);
+
+          // continue sweep
+        }
+
+        if (totalShares.lte(EPS)) {
+          throw new AppError(ErrorCode.INVALID_TRADE_AMOUNT, 'No enough liquidity to execute market buy', 400);
+        }
+      } else {
+        // action === 'sell': amount is shares to sell
+        const qtyToSell = new Decimal(amount);
+        // Reserve shares for the taker so upsertPositionFill can safely consume reserved_quantity.
+        const position = await trx('positions')
+          .where({ user_id: userId, market_id: marketId, side })
+          .forUpdate()
+          .first();
+
+        const ownedShares = new Decimal(position?.quantity ?? 0);
+        const reservedShares = new Decimal(position?.reserved_quantity ?? 0);
+        const availableShares = ownedShares.minus(reservedShares);
+        if (availableShares.lt(qtyToSell)) {
+          throw new AppError(ErrorCode.INSUFFICIENT_SHARES, `Insufficient shares to sell`, 400);
+        }
+
+        // Lock taker's shares
         await trx('positions')
           .where({ user_id: userId, market_id: marketId, side })
           .update({
-            quantity: Decimal.max(0, newQty).toFixed(8),
-            total_invested: Decimal.max(0, avgPrice.mul(Decimal.max(0, newQty))).toFixed(8),
-            realized_pnl: trx.raw('realized_pnl + ?', [realizedPnl.toFixed(8)]),
-            trade_count: trx.raw('trade_count + 1'),
-            last_trade_at: new Date(),
+            reserved_quantity: trx.raw('reserved_quantity + ?', [qtyToSell.toFixed(8)]),
+            updated_at: new Date(),
+          });
+
+        let remainingShares = qtyToSell;
+
+        const makers = await trx('orders')
+          .where({ market_id: marketId, side, action: 'buy', type: 'limit' })
+          .whereIn('status', ['open', 'partially_filled'])
+          .orderBy('price', 'desc')
+          .orderBy('created_at', 'asc')
+          .forUpdate()
+          .select('*');
+
+        for (const maker of makers) {
+          if (remainingShares.lte(EPS)) break;
+          const makerPrice = new Decimal(maker.price);
+          const makerRemaining = new Decimal(maker.remaining_quantity);
+          if (makerRemaining.lte(EPS)) continue;
+
+          const fillQty = Decimal.min(remainingShares, makerRemaining);
+          if (fillQty.lte(EPS)) continue;
+
+          const tradeValue = fillQty.mul(makerPrice);
+          const sellerFee = tradeValue.mul(feeRate);
+          const sellerProceeds = tradeValue.minus(sellerFee); // qty*price - fee
+          const buyerCost = tradeValue.plus(sellerFee); // qty*price + fee
+          const platformFee = buyerCost.minus(sellerProceeds); // 2*fee
+
+          // Update resting maker BUY order state (reserve_cash already exists from its placement)
+          const makerFilled = new Decimal(maker.filled_quantity).plus(fillQty);
+          const makerRemainingAfter = makerRemaining.minus(fillQty);
+          const makerStatus = makerRemainingAfter.lte(EPS) ? 'filled' : 'partially_filled';
+          await trx('orders')
+            .where('id', maker.id)
+            .update({
+              filled_quantity: makerFilled.toFixed(8),
+              remaining_quantity: makerRemainingAfter.toFixed(8),
+              status: makerStatus,
+              average_fill_price: makerPrice.toFixed(8),
+              updated_at: new Date(),
+            });
+
+          // Positions
+          await this.upsertPositionFill(trx, maker.user_id, marketId, side, 'buy', fillQty, makerPrice);
+          await this.upsertPositionFill(trx, userId, marketId, side, 'sell', fillQty, makerPrice);
+
+          // Cash:
+          // - maker buyer pays from reserved_cash (no refund since matchPrice == maker.price)
+          const makerBuyerBalance = await trx('balances')
+            .where('user_id', maker.user_id)
+            .forUpdate()
+            .first();
+          const makerBuyerResBefore = new Decimal(makerBuyerBalance.reserved_cash ?? makerBuyerBalance.reserved);
+          const reservedCashForFill = fillQty.mul(makerPrice).mul(new Decimal(1).plus(feeRate)); // qty*price*(1+feeRate)
+          const makerBuyerAvailBefore = new Decimal(makerBuyerBalance.available_cash ?? makerBuyerBalance.available);
+          const makerBuyerTotalBefore = makerBuyerAvailBefore.plus(makerBuyerResBefore);
+
+          await trx('balances')
+            .where('user_id', maker.user_id)
+            .update({
+              reserved_cash: trx.raw('reserved_cash - ?', [reservedCashForFill.toFixed(8)]),
+              reserved: trx.raw('reserved - ?', [reservedCashForFill.toFixed(8)]),
+              total: trx.raw('total - ?', [buyerCost.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          // - taker seller receives proceeds to available_cash
+          const sellerBalance = await trx('balances')
+            .where('user_id', userId)
+            .forUpdate()
+            .first();
+          const sellerAvailBefore = new Decimal(sellerBalance.available_cash ?? sellerBalance.available);
+          const sellerResBefore = new Decimal(sellerBalance.reserved_cash ?? sellerBalance.reserved);
+          const sellerTotalBefore = sellerAvailBefore.plus(sellerResBefore);
+
+          await trx('balances')
+            .where('user_id', userId)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [sellerProceeds.toFixed(8)]),
+              available: trx.raw('available + ?', [sellerProceeds.toFixed(8)]),
+              total: trx.raw('total + ?', [sellerProceeds.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          // - platform fee sink
+          if (feeAccount) {
+            await trx('balances')
+              .where('user_id', feeAccount.id)
+              .update({
+                available_cash: trx.raw('available_cash + ?', [platformFee.toFixed(8)]),
+                available: trx.raw('available + ?', [platformFee.toFixed(8)]),
+                total: trx.raw('total + ?', [platformFee.toFixed(8)]),
+                updated_at: new Date(),
+              });
+          }
+
+          // Trade record and balance tx
+          const marketNow = await trx('markets').where('id', marketId).first();
+          const yesBeforeFill = new Decimal(marketNow.current_yes_price);
+          const yesAfterFill = side === 'yes' ? new Decimal(1).minus(makerPrice) : makerPrice; // careful: matchPrice is probability of traded side
+          // Actually tradedSide is `side`; for market sell side==yes means yes probability = 1? No.
+          // For correctness:
+          const tradedSide = side;
+          const yesAfter = tradedSide === 'yes' ? makerPrice : new Decimal(1).minus(makerPrice);
+          const noAfter = tradedSide === 'yes' ? new Decimal(1).minus(makerPrice) : makerPrice;
+          const priceImpact = yesBeforeFill.eq(0) ? new Decimal(0) : yesAfter.minus(yesBeforeFill).abs().div(yesBeforeFill).mul(100);
+
+          const [tradeRow] = await trx('trades')
+            .insert({
+              market_id: marketId,
+              buyer_id: maker.user_id,
+              seller_id: userId,
+              buyer_order_id: maker.id,
+              seller_order_id: null,
+              side: tradedSide,
+              trade_type: 'order_book',
+              price: makerPrice.toFixed(8),
+              quantity: fillQty.toFixed(8),
+              total_value: tradeValue.toFixed(8),
+              fee: platformFee.toFixed(8),
+              yes_price_before: yesBeforeFill.toFixed(8),
+              yes_price_after: yesAfter.toFixed(8),
+              price_impact: priceImpact.toFixed(8),
+              executed_at: new Date(),
+              metadata: JSON.stringify({ orderBook: true, taker: true }),
+            })
+            .returning('*');
+
+          const makerBuyerAfter = await trx('balances').where('user_id', maker.user_id).first();
+          const makerBuyerTotalAfter = new Decimal(makerBuyerAfter.available_cash ?? makerBuyerAfter.available)
+            .plus(new Decimal(makerBuyerAfter.reserved_cash ?? makerBuyerAfter.reserved));
+          await trx('balance_transactions').insert({
+            user_id: maker.user_id,
+            type: 'trade_debit',
+            amount: buyerCost.toFixed(8),
+            balance_before: makerBuyerTotalBefore.toFixed(8),
+            balance_after: makerBuyerTotalAfter.toFixed(8),
+            reference_type: 'trade',
+            reference_id: tradeRow.id,
+            description: `Market fill: bought ${fillQty.toFixed(4)} ${tradedSide.toUpperCase()} @ ${makerPrice.toFixed(4)}`,
+          });
+
+          const sellerBalanceAfter = await trx('balances').where('user_id', userId).first();
+          const sellerTotalAfter = new Decimal(sellerBalanceAfter.available_cash ?? sellerBalanceAfter.available)
+            .plus(new Decimal(sellerBalanceAfter.reserved_cash ?? sellerBalanceAfter.reserved));
+          await trx('balance_transactions').insert({
+            user_id: userId,
+            type: 'trade_credit',
+            amount: sellerProceeds.toFixed(8),
+            balance_before: sellerTotalBefore.toFixed(8),
+            balance_after: sellerTotalAfter.toFixed(8),
+            reference_type: 'trade',
+            reference_id: tradeRow.id,
+            description: `Market fill: sold ${fillQty.toFixed(4)} ${tradedSide.toUpperCase()} @ ${makerPrice.toFixed(4)}`,
+          });
+
+          if (feeAccount) {
+            const platformAfter = await trx('balances').where('user_id', feeAccount.id).first();
+            const platformTotalAfter = new Decimal(platformAfter.available_cash ?? platformAfter.available)
+              .plus(new Decimal(platformAfter.reserved_cash ?? platformAfter.reserved));
+            await trx('balance_transactions').insert({
+              user_id: feeAccount.id,
+              type: 'fee',
+              amount: platformFee.toFixed(8),
+              balance_before: platformTotalAfter.minus(platformFee).toFixed(8),
+              balance_after: platformTotalAfter.toFixed(8),
+              reference_type: 'trade',
+              reference_id: tradeRow.id,
+              description: `Platform fee collected for market sell ${tradeRow.id}`,
+            });
+          }
+
+          await trx('markets')
+            .where('id', marketId)
+            .update({
+              current_yes_price: yesAfter.toFixed(8),
+              current_no_price: noAfter.toFixed(8),
+              volume_24h: trx.raw('volume_24h + ?', [tradeValue.toFixed(8)]),
+              volume_total: trx.raw('volume_total + ?', [tradeValue.toFixed(8)]),
+              trade_count: trx.raw('trade_count + 1'),
+              updated_at: new Date(),
+            });
+
+          await trx('price_history').insert({
+            market_id: marketId,
+            yes_price: yesAfter.toFixed(8),
+            no_price: noAfter.toFixed(8),
+            volume: tradeValue.toFixed(8),
+            trade_count: 1,
+            recorded_at: new Date(),
+          });
+
+          // Accumulators
+          remainingShares = remainingShares.minus(fillQty);
+          totalShares = totalShares.plus(fillQty);
+          totalTradeValue = totalTradeValue.plus(tradeValue);
+          totalUserFee = totalUserFee.plus(sellerFee);
+          totalCost = totalCost.plus(sellerProceeds);
+        }
+
+        // Unreserve any leftover (partial fill)
+        const unfilled = qtyToSell.minus(totalShares);
+        if (unfilled.gt(EPS)) {
+          await trx('positions')
+            .where({ user_id: userId, market_id: marketId, side })
+            .update({
+              reserved_quantity: trx.raw('reserved_quantity - ?', [unfilled.toFixed(8)]),
+              updated_at: new Date(),
+            });
+        }
+
+        if (totalShares.lte(EPS)) {
+          throw new AppError(ErrorCode.INVALID_TRADE_AMOUNT, 'No enough liquidity to execute market sell', 400);
+        }
+      }
+
+      const averagePrice = totalTradeValue.div(totalShares);
+      const yesAfter = tradedSide === 'yes' ? averagePrice : new Decimal(1).minus(averagePrice);
+      const priceImpact = yesBefore.eq(0) ? new Decimal(0) : yesAfter.minus(yesBefore).abs().div(yesBefore).mul(100);
+
+      // Slippage guard (compares selected-side avg price)
+      if (expectedPrice !== undefined) {
+        if (!new Decimal(expectedPrice).eq(0)) {
+          const diffPct = new Decimal(averagePrice).minus(expectedPrice).abs().div(expectedPrice).mul(100);
+          if (diffPct.gt(maxSlippage)) {
+            throw new SlippageExceededError(expectedPrice, averagePrice.toNumber(), maxSlippage);
+          }
+        }
+      }
+
+      const userBalance = await trx('balances').where('user_id', userId).forUpdate().first();
+      const newBalance = new Decimal(userBalance.available_cash ?? userBalance.available).toNumber();
+
+      const tradeId = (await trx('trades')
+        .where({ market_id: marketId })
+        .orderBy('executed_at', 'desc')
+        .limit(1)
+        .first()).id as string;
+
+      return {
+        tradeId,
+        sharesTransacted: totalShares.toNumber(),
+        totalCost: totalCost.toNumber(),
+        averagePrice: averagePrice.toNumber(),
+        priceImpact: priceImpact.toNumber(),
+        yesPriceBefore: yesBefore.toNumber(),
+        yesPriceAfter: yesAfter.toNumber(),
+        fee: totalUserFee.toNumber(),
+        newBalance,
+      };
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // MARKET RESOLUTION
+  // ─────────────────────────────────────────────────────────────────
+  async resolveMarket(
+    marketId: string,
+    outcome: 'yes' | 'no' | 'invalid',
+    resolvedBy: string,
+    note?: string
+  ): Promise<{ totalPayouts: number; winnersCount: number }> {
+    return withTransaction(async (trx) => {
+      const market = await trx('markets').where('id', marketId).forUpdate().first();
+      if (!market) throw new AppError(ErrorCode.MARKET_NOT_FOUND, 'Market not found', 404);
+      if (market.status === 'resolved') {
+        throw new AppError(ErrorCode.MARKET_ALREADY_RESOLVED, 'Market already resolved', 400);
+      }
+      if (!['active', 'paused', 'expired', 'cancelled'].includes(market.status)) {
+        throw new AppError(ErrorCode.INVALID_MARKET_STATUS, `Cannot resolve market in status: ${market.status}`, 400);
+      }
+
+      // 1) Cancel open orders and release reserved resources
+      const openOrders = await trx('orders')
+        .where({ market_id: marketId })
+        .whereIn('status', ['open', 'partially_filled'])
+        .forUpdate()
+        .select('*');
+
+      for (const order of openOrders) {
+        const remainingQty = new Decimal(order.remaining_quantity);
+
+        if (order.action === 'buy') {
+          // release reserved_cash: remaining_qty * limitPrice * (1 + feeRate)
+          const remainingCost = remainingQty.mul(new Decimal(order.price));
+          const feeOnRemaining = remainingCost.mul(this.FEE_RATE);
+          const refundCash = remainingCost.plus(feeOnRemaining);
+
+          await trx('balances')
+            .where('user_id', order.user_id)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [refundCash.toFixed(8)]),
+              reserved_cash: trx.raw('reserved_cash - ?', [refundCash.toFixed(8)]),
+              available: trx.raw('available + ?', [refundCash.toFixed(8)]),
+              reserved: trx.raw('reserved - ?', [refundCash.toFixed(8)]),
+              updated_at: new Date(),
+            });
+        } else {
+          // release reserved_shares
+          await trx('positions')
+            .where({ user_id: order.user_id, market_id: marketId, side: order.side })
+            .update({
+              reserved_quantity: trx.raw('reserved_quantity - ?', [remainingQty.toFixed(8)]),
+              updated_at: new Date(),
+            });
+        }
+
+        await trx('orders')
+          .where('id', order.id)
+          .update({
+            status: 'cancelled',
+            cancel_reason: 'Market resolved',
             updated_at: new Date(),
           });
       }
-    }
+
+      // 2) Set market outcome
+      await trx('markets').where('id', marketId).update({
+        status: 'resolved',
+        outcome,
+        resolved_at: new Date(),
+        resolved_by: resolvedBy,
+        resolution_note: note,
+        updated_at: new Date(),
+      });
+
+      // 3) Pay winners / refund on invalid
+      let totalPayouts = new Decimal(0);
+      let winnersCount = 0;
+
+      // Resolution cash comes from the market creator escrow (initialLiquidity locked as reserved_cash)
+      // and, for INVALID, optionally from the platform fee sink.
+      const creatorId = market.creator_id as string;
+      const creatorBalance = await trx('balances')
+        .where('user_id', creatorId)
+        .forUpdate()
+        .first();
+      const creatorAvailRemaining = new Decimal(creatorBalance?.available_cash ?? creatorBalance?.available ?? 0);
+      let creatorReservedRemaining = new Decimal(creatorBalance?.reserved_cash ?? creatorBalance?.reserved ?? 0);
+      let creatorTotalRemaining = creatorAvailRemaining.plus(creatorReservedRemaining);
+
+      const feeAccount = await this.getFeeAccount(trx);
+      let feeAvailableRemaining = new Decimal(0);
+      let feeTotalRemaining = new Decimal(0);
+      if (feeAccount) {
+        const feeBalance = await trx('balances')
+          .where('user_id', feeAccount.id)
+          .forUpdate()
+          .first();
+        feeAvailableRemaining = new Decimal(feeBalance?.available_cash ?? feeBalance?.available ?? 0);
+        const feeReservedRemaining = new Decimal(feeBalance?.reserved_cash ?? feeBalance?.reserved ?? 0);
+        feeTotalRemaining = feeAvailableRemaining.plus(feeReservedRemaining);
+      }
+
+      const positions = await trx('positions')
+        .where({ market_id: marketId })
+        .where('quantity', '>', 0)
+        .forUpdate()
+        .select('*');
+
+      for (const pos of positions) {
+        const qty = new Decimal(pos.quantity);
+
+        // Reset positions after resolution
+        await trx('positions')
+          .where({ id: pos.id })
+          .update({
+            quantity: '0',
+            reserved_quantity: '0',
+            average_price: '0',
+            total_invested: '0',
+            realized_pnl: '0',
+            unrealized_pnl: '0',
+            updated_at: new Date(),
+          });
+
+        if (outcome === 'invalid') {
+          // INVALID: refund user's net spend stored on the position.
+          const refund = new Decimal(pos.total_invested ?? 0);
+
+          // Debit resolution funds from:
+          // - creator reserved_cash (escrow)
+          // - fee sink (only if needed)
+          const fromCreator = Decimal.min(creatorReservedRemaining, refund);
+          const fromFee = refund.minus(fromCreator);
+
+          if (fromCreator.gt(0)) {
+            const balanceBefore = creatorTotalRemaining;
+            const balanceAfter = balanceBefore.minus(fromCreator);
+            await trx('balances')
+              .where('user_id', creatorId)
+              .update({
+                reserved_cash: trx.raw('reserved_cash - ?', [fromCreator.toFixed(8)]),
+                reserved: trx.raw('reserved - ?', [fromCreator.toFixed(8)]),
+                total: trx.raw('total - ?', [fromCreator.toFixed(8)]),
+                updated_at: new Date(),
+              });
+            await trx('balance_transactions').insert({
+              user_id: creatorId,
+              type: 'trade_debit',
+              amount: fromCreator.toFixed(8),
+              balance_before: balanceBefore.toFixed(8),
+              balance_after: balanceAfter.toFixed(8),
+              reference_type: 'market_resolution',
+              reference_id: marketId,
+              description: `Market resolved ${outcome.toUpperCase()} — escrow debited`,
+            });
+            creatorReservedRemaining = creatorReservedRemaining.minus(fromCreator);
+            creatorTotalRemaining = balanceAfter;
+          }
+
+          if (fromFee.gt(0)) {
+            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for invalid refund', 500);
+            const balanceBefore = feeTotalRemaining;
+            const balanceAfter = balanceBefore.minus(fromFee);
+            await trx('balances')
+              .where('user_id', feeAccount.id)
+              .update({
+                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
+                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
+                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
+                updated_at: new Date(),
+              });
+            await trx('balance_transactions').insert({
+              user_id: feeAccount.id,
+              type: 'trade_debit',
+              amount: fromFee.toFixed(8),
+              balance_before: balanceBefore.toFixed(8),
+              balance_after: balanceAfter.toFixed(8),
+              reference_type: 'market_resolution',
+              reference_id: marketId,
+              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited`,
+            });
+            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
+            feeTotalRemaining = balanceAfter;
+          }
+
+          const balance = await trx('balances')
+            .where('user_id', pos.user_id)
+            .forUpdate()
+            .first();
+          const availBefore = new Decimal(balance.available_cash ?? balance.available);
+
+          await trx('balances')
+            .where('user_id', pos.user_id)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [refund.toFixed(8)]),
+              available: trx.raw('available + ?', [refund.toFixed(8)]),
+              total: trx.raw('total + ?', [refund.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          totalPayouts = totalPayouts.plus(refund);
+          winnersCount++;
+          await trx('balance_transactions').insert({
+            user_id: pos.user_id,
+            type: 'refund',
+            amount: refund.toFixed(8),
+            balance_before: availBefore.toFixed(8),
+            balance_after: availBefore.plus(refund).toFixed(8),
+            reference_type: 'market_resolution',
+            reference_id: marketId,
+            description: `Market resolved as INVALID — refund for ${qty.toFixed(4)} ${pos.side.toUpperCase()} shares`,
+          });
+          continue;
+        }
+
+        if (pos.side === outcome) {
+          const payout = qty; // 1.0 per winning share
+
+          const fromCreator = Decimal.min(creatorReservedRemaining, payout);
+          const fromFee = payout.minus(fromCreator);
+
+          if (fromCreator.gt(0)) {
+            const balanceBefore = creatorTotalRemaining;
+            const balanceAfter = balanceBefore.minus(fromCreator);
+            await trx('balances')
+              .where('user_id', creatorId)
+              .update({
+                reserved_cash: trx.raw('reserved_cash - ?', [fromCreator.toFixed(8)]),
+                reserved: trx.raw('reserved - ?', [fromCreator.toFixed(8)]),
+                total: trx.raw('total - ?', [fromCreator.toFixed(8)]),
+                updated_at: new Date(),
+              });
+            await trx('balance_transactions').insert({
+              user_id: creatorId,
+              type: 'trade_debit',
+              amount: fromCreator.toFixed(8),
+              balance_before: balanceBefore.toFixed(8),
+              balance_after: balanceAfter.toFixed(8),
+              reference_type: 'market_resolution',
+              reference_id: marketId,
+              description: `Market resolved ${outcome.toUpperCase()} — escrow debited`,
+            });
+            creatorReservedRemaining = creatorReservedRemaining.minus(fromCreator);
+            creatorTotalRemaining = balanceAfter;
+          }
+
+          if (fromFee.gt(0)) {
+            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for payout', 500);
+            const balanceBefore = feeTotalRemaining;
+            const balanceAfter = balanceBefore.minus(fromFee);
+            await trx('balances')
+              .where('user_id', feeAccount.id)
+              .update({
+                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
+                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
+                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
+                updated_at: new Date(),
+              });
+            await trx('balance_transactions').insert({
+              user_id: feeAccount.id,
+              type: 'trade_debit',
+              amount: fromFee.toFixed(8),
+              balance_before: balanceBefore.toFixed(8),
+              balance_after: balanceAfter.toFixed(8),
+              reference_type: 'market_resolution',
+              reference_id: marketId,
+              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited`,
+            });
+            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
+            feeTotalRemaining = balanceAfter;
+          }
+
+          const balance = await trx('balances')
+            .where('user_id', pos.user_id)
+            .forUpdate()
+            .first();
+          const availBefore = new Decimal(balance.available_cash ?? balance.available);
+
+          await trx('balances')
+            .where('user_id', pos.user_id)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [payout.toFixed(8)]),
+              available: trx.raw('available + ?', [payout.toFixed(8)]),
+              total: trx.raw('total + ?', [payout.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          winnersCount++;
+          totalPayouts = totalPayouts.plus(payout);
+
+          await trx('balance_transactions').insert({
+            user_id: pos.user_id,
+            type: 'trade_credit',
+            amount: payout.toFixed(8),
+            balance_before: availBefore.toFixed(8),
+            balance_after: availBefore.plus(payout).toFixed(8),
+            reference_type: 'market_resolution',
+            reference_id: marketId,
+            description: `Market resolved ${outcome.toUpperCase()} — payout for ${qty.toFixed(4)} shares`,
+          });
+        }
+      }
+
+      return {
+        totalPayouts: totalPayouts.toNumber(),
+        winnersCount,
+      };
+    });
   }
 
   // ─────────────────────────────────────────────────────────────────
@@ -521,34 +1662,57 @@ export class OrderBookService {
         throw new AppError(ErrorCode.VALIDATION_ERROR, `Cannot cancel order in status: ${order.status}`, 400);
       }
 
-      // Refund reserved balance
-      if (order.action === 'buy') {
-        const remainingCost = new Decimal(order.remaining_quantity).mul(new Decimal(order.price));
-        const feeOnRemaining = remainingCost.mul(this.FEE_RATE);
-        const refundAmount = remainingCost.plus(feeOnRemaining);
+      const remainingQty = new Decimal(order.remaining_quantity);
 
-        if (refundAmount.gt(0)) {
-          const balance = await trx('balances').where('user_id', userId).first();
+      // Refund reserved resources
+      if (order.action === 'buy') {
+        // Release reserved_cash for remaining portion:
+        // reserved_cash = remaining_qty * limitPrice * (1 + fee_rate)
+        const remainingCost = remainingQty.mul(new Decimal(order.price));
+        const feeOnRemaining = remainingCost.mul(this.FEE_RATE);
+        const refundCash = remainingCost.plus(feeOnRemaining);
+
+        if (refundCash.gt(0)) {
+          const balance = await trx('balances')
+            .where('user_id', userId)
+            .forUpdate()
+            .first();
+
+          const availBefore = new Decimal(balance.available_cash ?? balance.available);
+          const resBefore = new Decimal(balance.reserved_cash ?? balance.reserved);
+          const totalBefore = availBefore.plus(resBefore);
 
           await trx('balances')
             .where('user_id', userId)
             .update({
-              available: trx.raw('available + ?', [refundAmount.toFixed(8)]),
-              reserved: trx.raw('reserved - ?', [refundAmount.toFixed(8)]),
+              available_cash: trx.raw('available_cash + ?', [refundCash.toFixed(8)]),
+              reserved_cash: trx.raw('reserved_cash - ?', [refundCash.toFixed(8)]),
+              available: trx.raw('available + ?', [refundCash.toFixed(8)]),
+              reserved: trx.raw('reserved - ?', [refundCash.toFixed(8)]),
               updated_at: new Date(),
             });
+
+          const totalAfter = totalBefore.plus(refundCash);
 
           await trx('balance_transactions').insert({
             user_id: userId,
             type: 'refund',
-            amount: refundAmount.toFixed(8),
-            balance_before: balance.available,
-            balance_after: new Decimal(balance.available).plus(refundAmount).toFixed(8),
+            amount: refundCash.toFixed(8),
+            balance_before: totalBefore.toFixed(8),
+            balance_after: totalAfter.toFixed(8),
             reference_type: 'order',
             reference_id: orderId,
-            description: 'Order cancelled — reserved funds released',
+            description: 'Order cancelled — reserved cash released',
           });
         }
+      } else {
+        // SELL cancel: release reserved_shares only (positions.quantity must stay intact).
+        await trx('positions')
+          .where({ user_id: userId, market_id: order.market_id, side: order.side })
+          .update({
+            reserved_quantity: trx.raw('reserved_quantity - ?', [remainingQty.toFixed(8)]),
+            updated_at: new Date(),
+          });
       }
 
       await trx('orders')

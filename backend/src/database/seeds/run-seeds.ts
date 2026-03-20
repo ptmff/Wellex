@@ -30,6 +30,8 @@ export async function runSeeds(): Promise<void> {
   const users = [
     { email: 'admin@example.com', username: 'admin', password_hash: passwordHash, role: 'admin', display_name: 'Admin' },
     { email: 'moderator@example.com', username: 'moderator', password_hash: passwordHash, role: 'moderator', display_name: 'Moderator' },
+    // Internal fee sink account for exchange/platform fees.
+    { email: 'exchange@example.com', username: 'exchange', password_hash: passwordHash, role: 'admin', display_name: 'Exchange' },
     { email: 'alice@example.com', username: 'alice', password_hash: passwordHash, role: 'user', display_name: 'Alice' },
     { email: 'bob@example.com', username: 'bob', password_hash: passwordHash, role: 'user', display_name: 'Bob' },
     { email: 'charlie@example.com', username: 'charlie', password_hash: passwordHash, role: 'user', display_name: 'Charlie' },
@@ -46,6 +48,8 @@ export async function runSeeds(): Promise<void> {
       available: config.INITIAL_USER_BALANCE.toFixed(8),
       reserved: '0',
       total: config.INITIAL_USER_BALANCE.toFixed(8),
+      available_cash: config.INITIAL_USER_BALANCE.toFixed(8),
+      reserved_cash: '0',
       currency: 'USD',
     });
 

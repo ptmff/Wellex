@@ -70,7 +70,8 @@ export class MarketsService {
         .forUpdate()
         .first();
 
-      if (!balance || new Decimal(balance.available).lt(validated.initialLiquidity)) {
+      const availableCash = new Decimal(balance.available_cash ?? balance.available);
+      if (!balance || availableCash.lt(validated.initialLiquidity)) {
         throw new AppError(
           ErrorCode.INSUFFICIENT_BALANCE,
           `Insufficient balance for initial liquidity (need ${validated.initialLiquidity})`,
@@ -78,11 +79,14 @@ export class MarketsService {
         );
       }
 
+      // Lock initial liquidity as an escrow (reserved_cash) used for payouts on resolution.
       await trx('balances')
         .where('user_id', userId)
         .update({
+          available_cash: trx.raw('available_cash - ?', [validated.initialLiquidity]),
+          reserved_cash: trx.raw('reserved_cash + ?', [validated.initialLiquidity]),
           available: trx.raw('available - ?', [validated.initialLiquidity]),
-          total: trx.raw('total - ?', [validated.initialLiquidity]),
+          reserved: trx.raw('reserved + ?', [validated.initialLiquidity]),
           updated_at: new Date(),
         });
 
@@ -97,8 +101,9 @@ export class MarketsService {
           status: 'active',
           initial_liquidity: validated.initialLiquidity,
           liquidity_b: b.toFixed(8),
-          yes_shares: '0',
-          no_shares: '0',
+          // Mint initial YES/NO shares supply for order-book solvency.
+          yes_shares: validated.initialLiquidity.toFixed(8),
+          no_shares: validated.initialLiquidity.toFixed(8),
           current_yes_price: '0.5',
           current_no_price: '0.5',
           liquidity_total: validated.initialLiquidity,
@@ -117,6 +122,39 @@ export class MarketsService {
         total_liquidity_before: 0,
         total_liquidity_after: validated.initialLiquidity,
       });
+
+      // Mint creator positions (total supply is conserved per outcome side).
+      // Entry price for UI starts at 0.5.
+      const initialShares = validated.initialLiquidity.toFixed(8);
+      const initialEntry = new Decimal(0.5).mul(validated.initialLiquidity).toFixed(8);
+      await trx('positions').insert([
+        {
+          user_id: userId,
+          market_id: newMarket.id,
+          side: 'yes',
+          quantity: initialShares,
+          reserved_quantity: '0',
+          average_price: '0.5',
+          total_invested: initialEntry,
+          realized_pnl: '0',
+          unrealized_pnl: '0',
+          trade_count: 0,
+          last_trade_at: null,
+        },
+        {
+          user_id: userId,
+          market_id: newMarket.id,
+          side: 'no',
+          quantity: initialShares,
+          reserved_quantity: '0',
+          average_price: '0.5',
+          total_invested: initialEntry,
+          realized_pnl: '0',
+          unrealized_pnl: '0',
+          trade_count: 0,
+          last_trade_at: null,
+        },
+      ]);
 
       // Initial price history snapshot
       await trx('price_history').insert({
