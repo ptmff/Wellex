@@ -21,7 +21,6 @@ export const CreateMarketDto = z.object({
     .refine((d) => new Date(d) > new Date(Date.now() + 60 * 60 * 1000), {
       message: 'Market must close at least 1 hour from now',
     }),
-  initialLiquidity: z.number().min(10).max(100000).default(100),
   imageUrl: z.string().url().optional(),
   tags: z.array(z.string().max(50)).max(10).default([]),
   metadata: z.record(z.unknown()).default({}),
@@ -59,37 +58,10 @@ export class MarketsService {
   async create(userId: string, input: CreateMarketInput) {
     const validated = CreateMarketDto.parse(input);
 
-    // Calculate LMSR b parameter based on initial liquidity
-    // b = initialLiquidity / ln(2) gives 50/50 initial price
-    const b = new Decimal(validated.initialLiquidity).div(Math.LN2);
+    // Legacy LMSR field kept for schema compatibility.
+    const b = new Decimal(1);
 
     const market = await db.transaction(async (trx) => {
-      // Deduct initial liquidity from creator's balance
-      const balance = await trx('balances')
-        .where('user_id', userId)
-        .forUpdate()
-        .first();
-
-      const availableCash = new Decimal(balance.available_cash ?? balance.available);
-      if (!balance || availableCash.lt(validated.initialLiquidity)) {
-        throw new AppError(
-          ErrorCode.INSUFFICIENT_BALANCE,
-          `Insufficient balance for initial liquidity (need ${validated.initialLiquidity})`,
-          400
-        );
-      }
-
-      // Lock initial liquidity as an escrow (reserved_cash) used for payouts on resolution.
-      await trx('balances')
-        .where('user_id', userId)
-        .update({
-          available_cash: trx.raw('available_cash - ?', [validated.initialLiquidity]),
-          reserved_cash: trx.raw('reserved_cash + ?', [validated.initialLiquidity]),
-          available: trx.raw('available - ?', [validated.initialLiquidity]),
-          reserved: trx.raw('reserved + ?', [validated.initialLiquidity]),
-          updated_at: new Date(),
-        });
-
       const [newMarket] = await trx('markets')
         .insert({
           creator_id: userId,
@@ -99,62 +71,18 @@ export class MarketsService {
           resolution_criteria: validated.resolutionCriteria,
           image_url: validated.imageUrl ?? null,
           status: 'active',
-          initial_liquidity: validated.initialLiquidity,
+          initial_liquidity: '0',
           liquidity_b: b.toFixed(8),
-          // Mint initial YES/NO shares supply for order-book solvency.
-          yes_shares: validated.initialLiquidity.toFixed(8),
-          no_shares: validated.initialLiquidity.toFixed(8),
+          yes_shares: '0',
+          no_shares: '0',
           current_yes_price: '0.5',
           current_no_price: '0.5',
-          liquidity_total: validated.initialLiquidity,
+          liquidity_total: '0',
           closes_at: new Date(validated.closesAt),
           tags: JSON.stringify(validated.tags),
           metadata: JSON.stringify(validated.metadata),
         })
         .returning('*');
-
-      // Record liquidity event
-      await trx('liquidity_events').insert({
-        market_id: newMarket.id,
-        user_id: userId,
-        type: 'initial',
-        amount: validated.initialLiquidity,
-        total_liquidity_before: 0,
-        total_liquidity_after: validated.initialLiquidity,
-      });
-
-      // Mint creator positions (total supply is conserved per outcome side).
-      // Entry price for UI starts at 0.5.
-      const initialShares = validated.initialLiquidity.toFixed(8);
-      const initialEntry = new Decimal(0.5).mul(validated.initialLiquidity).toFixed(8);
-      await trx('positions').insert([
-        {
-          user_id: userId,
-          market_id: newMarket.id,
-          side: 'yes',
-          quantity: initialShares,
-          reserved_quantity: '0',
-          average_price: '0.5',
-          total_invested: initialEntry,
-          realized_pnl: '0',
-          unrealized_pnl: '0',
-          trade_count: 0,
-          last_trade_at: null,
-        },
-        {
-          user_id: userId,
-          market_id: newMarket.id,
-          side: 'no',
-          quantity: initialShares,
-          reserved_quantity: '0',
-          average_price: '0.5',
-          total_invested: initialEntry,
-          realized_pnl: '0',
-          unrealized_pnl: '0',
-          trade_count: 0,
-          last_trade_at: null,
-        },
-      ]);
 
       // Initial price history snapshot
       await trx('price_history').insert({
@@ -213,6 +141,8 @@ export class MarketsService {
         'm.id', 'm.title', 'm.description', 'm.status', 'm.outcome',
         'm.current_yes_price', 'm.current_no_price',
         'm.volume_24h', 'm.volume_total', 'm.trade_count',
+        // Needed for frontend category selection/creation: `formatMarket()` expects `market.category_id`.
+        'm.category_id',
         'm.closes_at', 'm.created_at', 'm.is_featured', 'm.tags',
         'm.image_url',
         'c.name as category_name', 'c.slug as category_slug',

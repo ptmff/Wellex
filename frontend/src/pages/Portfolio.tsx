@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
 import {
   ResponsiveContainer,
@@ -22,6 +23,15 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { usePortfolioWebSocket } from "@/hooks/usePortfolioWebSocket";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import type {
   PaginatedResult,
   PortfolioBalanceTx,
@@ -31,6 +41,7 @@ import type {
   PortfolioTrade,
 } from "@/lib/portfolio";
 import { formatDateToLocaleDateString, formatDateToLocaleString, parseDate } from "@/lib/date";
+import { executeMarketTrade, getTradeQuote } from "@/api/trading";
 
 type ChartPoint = {
   time: string;
@@ -38,6 +49,7 @@ type ChartPoint = {
 };
 
 export default function Portfolio() {
+  const queryClient = useQueryClient();
   const { request, user } = useAuth();
 
   const [tradesPage, setTradesPage] = useState(1);
@@ -45,6 +57,8 @@ export default function Portfolio() {
 
   const [balanceHistoryPage] = useState(1);
   const balanceHistoryLimit = 50;
+  const [closingPositionId, setClosingPositionId] = useState<string | null>(null);
+  const [maxSlippage, setMaxSlippage] = useState(5);
 
   const {
     data: portfolio,
@@ -138,6 +152,8 @@ export default function Portfolio() {
     : null;
 
   const totalBalance = portfolio?.balance.total ?? 0;
+  const availableBalance = portfolio?.balance.available ?? 0;
+  const reservedBalance = portfolio?.balance.reserved ?? 0;
   const totalPnl = portfolio?.pnl.total ?? 0;
   const isPnlPositive = totalPnl >= 0;
   const pnlPercent = (() => {
@@ -156,6 +172,57 @@ export default function Portfolio() {
     pnl: p.unrealizedPnl,
     pnlPercent: p.unrealizedPnlPct,
   }));
+  const closingPosition = (apiPositions ?? []).find((p) => p.id === closingPositionId) ?? null;
+
+  const marketCloseQuoteQuery = useQuery({
+    queryKey: [
+      "market-close-quote",
+      closingPosition?.marketId,
+      closingPosition?.side,
+      closingPosition?.quantity,
+      maxSlippage,
+    ],
+    queryFn: () =>
+      getTradeQuote(request, closingPosition!.marketId, {
+        side: closingPosition!.side,
+        action: "sell",
+        amount: closingPosition!.quantity,
+      }),
+    enabled: !!closingPosition && !!request && !!user,
+    refetchInterval: closingPosition ? 3000 : false,
+  });
+
+  const marketCloseMutation = useMutation({
+    mutationFn: async () => {
+      if (!closingPosition) return null;
+      const quote = marketCloseQuoteQuery.data;
+      return executeMarketTrade(request, closingPosition.marketId, {
+        side: closingPosition.side,
+        action: "sell",
+        amount: closingPosition.quantity,
+        maxSlippage,
+        expectedPrice: quote?.averagePrice,
+      });
+    },
+    onSuccess: async (result) => {
+      if (!result) return;
+      toast.success(
+        `Position closed: ${result.sharesTransacted.toFixed(4)} shares at ${Math.round(
+          result.averagePrice * 100,
+        )}c`,
+      );
+      setClosingPositionId(null);
+      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
+      await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+    },
+    onError: (err) => {
+      const maybeMessage = (err as { message?: unknown } | undefined)?.message;
+      toast.error(typeof maybeMessage === "string" ? maybeMessage : "Failed to close position");
+    },
+  });
 
   const chartData: ChartPoint[] = useMemo(() => {
     const txs = balanceHistory?.data ?? [];
@@ -181,7 +248,15 @@ export default function Portfolio() {
         <h1 className="text-2xl font-bold mb-6">Portfolio</h1>
 
         {/* Balance cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
+          <div className="rounded-xl bg-card border border-border/50 p-4">
+            <div className="text-xs text-muted-foreground mb-1">Available Balance</div>
+            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${availableBalance.toLocaleString()}`}</div>
+          </div>
+          <div className="rounded-xl bg-card border border-border/50 p-4">
+            <div className="text-xs text-muted-foreground mb-1">Reserved Balance</div>
+            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${reservedBalance.toLocaleString()}`}</div>
+          </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">Total Balance</div>
             <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${totalBalance.toLocaleString()}`}</div>
@@ -206,10 +281,12 @@ export default function Portfolio() {
               </span>
             </div>
           </div>
-          <div className="rounded-xl bg-card border border-border/50 p-4">
-            <div className="text-xs text-muted-foreground mb-1">Open Positions</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : portfolio?.positions.open ?? 0}</div>
-          </div>
+        </div>
+
+        {/* Open positions */}
+        <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
+          <div className="text-xs text-muted-foreground mb-1">Open Positions</div>
+          <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : portfolio?.positions.open ?? 0}</div>
         </div>
 
         {/* Performance chart */}
@@ -309,6 +386,12 @@ export default function Portfolio() {
                       {pos.pnlPercent > 0 ? "+" : ""}
                       {pos.pnlPercent}%
                     </div>
+                    <button
+                      className="text-[11px] mt-1 text-muted-foreground hover:text-foreground"
+                      onClick={() => setClosingPositionId(pos.id)}
+                    >
+                      Close at market
+                    </button>
                   </div>
                 </motion.div>
               ))
@@ -501,6 +584,93 @@ export default function Portfolio() {
           )}
         </div>
       </motion.div>
+
+      <Dialog open={!!closingPosition} onOpenChange={(open) => !open && setClosingPositionId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Close Position at Market</DialogTitle>
+            <DialogDescription>
+              Sell your full {closingPosition?.side.toUpperCase()} position immediately into available bids.
+            </DialogDescription>
+          </DialogHeader>
+
+          {!closingPosition ? null : (
+            <div className="space-y-3 text-sm">
+              <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
+                <div className="font-medium">{closingPosition.marketTitle}</div>
+                <div className="text-xs text-muted-foreground mt-1">
+                  {closingPosition.side.toUpperCase()} | {closingPosition.quantity.toFixed(4)} shares
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs text-muted-foreground mb-1 block">Max slippage (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={50}
+                  step={0.1}
+                  value={maxSlippage}
+                  onChange={(e) => {
+                    const n = Number(e.target.value);
+                    if (!Number.isFinite(n)) return;
+                    setMaxSlippage(Math.max(0, Math.min(50, n)));
+                  }}
+                  className="w-full bg-secondary rounded-lg px-3 py-2 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
+                />
+              </div>
+
+              <div className="rounded-md border border-border/60 p-3 space-y-1.5 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Estimated proceeds</span>
+                  <span className="font-medium">
+                    {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.totalCost.toFixed(2)}` : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Estimated avg price</span>
+                  <span className="font-medium">
+                    {marketCloseQuoteQuery.data ? `${Math.round(marketCloseQuoteQuery.data.averagePrice * 100)}c` : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Fees</span>
+                  <span className="font-medium">
+                    {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.fee.toFixed(2)}` : "—"}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Price impact</span>
+                  <span className="font-medium">
+                    {marketCloseQuoteQuery.data ? `${marketCloseQuoteQuery.data.priceImpact.toFixed(2)}%` : "—"}
+                  </span>
+                </div>
+                {marketCloseQuoteQuery.isLoading ? (
+                  <div className="text-muted-foreground pt-1">Fetching live quote...</div>
+                ) : null}
+                {marketCloseQuoteQuery.isError ? (
+                  <div className="text-destructive pt-1">
+                    Failed to get quote. There may be no immediate liquidity for this close.
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setClosingPositionId(null)} disabled={marketCloseMutation.isPending}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={marketCloseMutation.isPending || !marketCloseQuoteQuery.data || marketCloseQuoteQuery.isError}
+              onClick={() => marketCloseMutation.mutate()}
+            >
+              {marketCloseMutation.isPending ? "Closing..." : "Close position now"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppLayout>
   );
 }

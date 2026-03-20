@@ -35,7 +35,6 @@ const configSchema = z.object({
   RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
 
   // Trading
-  LMSR_LIQUIDITY_PARAMETER: z.coerce.number().default(100),
   MIN_TRADE_AMOUNT: z.coerce.number().default(1),
   MAX_TRADE_AMOUNT: z.coerce.number().default(100000),
   INITIAL_USER_BALANCE: z.coerce.number().default(10000),

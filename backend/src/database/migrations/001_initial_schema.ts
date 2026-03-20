@@ -209,11 +209,11 @@ export async function runMigrations(): Promise<void> {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
     t.uuid('buyer_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
-    t.uuid('seller_id').references('id').inTable('users').onDelete('RESTRICT'); // null for AMM trades
+    t.uuid('seller_id').references('id').inTable('users').onDelete('RESTRICT');
     t.uuid('buyer_order_id').references('id').inTable('orders').onDelete('SET NULL');
     t.uuid('seller_order_id').references('id').inTable('orders').onDelete('SET NULL');
     t.enum('side', ['yes', 'no']).notNullable();
-    t.enum('trade_type', ['amm', 'order_book']).notNullable().defaultTo('amm');
+    t.enum('trade_type', ['order_book']).notNullable().defaultTo('order_book');
     t.decimal('price', 10, 8).notNullable();
     t.decimal('quantity', 20, 8).notNullable();
     t.decimal('total_value', 20, 8).notNullable();

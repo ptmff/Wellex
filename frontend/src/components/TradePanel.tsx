@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/auth/AuthContext";
-import { executeTrade, getTradeQuote, type TradeAction, type TradeExecuteInput, type TradeQuoteResponse, type TradeSide } from "@/api/trading";
+import { cancelOrder, getMyOrders, getOrderBook, placeOrder, type OrderAction, type OrderSide } from "@/api/orders";
 
 interface TradePanelProps {
   marketId: string;
@@ -15,75 +15,52 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
   const { request, user } = useAuth();
 
   const [side, setSide] = useState<"YES" | "NO">("YES");
-  const [amount, setAmount] = useState("");
-  const [action, setAction] = useState<TradeAction>("buy");
-  const [maxSlippage, setMaxSlippage] = useState<number>(2);
+  const [priceInput, setPriceInput] = useState("");
+  const [quantityInput, setQuantityInput] = useState("");
+  const [action, setAction] = useState<OrderAction>("buy");
 
-  const sideApi: TradeSide = side === "YES" ? "yes" : "no";
+  const sideApi: OrderSide = side === "YES" ? "yes" : "no";
 
   const yesCents = useMemo(() => Math.round(currentYesPrice * 100), [currentYesPrice]);
   const noCents = useMemo(() => Math.round((1 - currentYesPrice) * 100), [currentYesPrice]);
 
-  const parsedAmount = useMemo(() => {
-    const n = Number(amount);
+  const parsedPrice = useMemo(() => {
+    const n = Number(priceInput);
+    if (!Number.isFinite(n) || n <= 0 || n >= 1) return undefined;
+    return n;
+  }, [priceInput]);
+
+  const parsedQuantity = useMemo(() => {
+    const n = Number(quantityInput);
     if (!Number.isFinite(n) || n <= 0) return undefined;
     return n;
-  }, [amount]);
+  }, [quantityInput]);
 
-  // Debounce to avoid hammering quote endpoint while typing.
-  const [debouncedAmount, setDebouncedAmount] = useState<number | undefined>(undefined);
-  useEffect(() => {
-    if (parsedAmount === undefined) {
-      setDebouncedAmount(undefined);
-      return;
-    }
-    const t = window.setTimeout(() => setDebouncedAmount(parsedAmount), 350);
-    return () => window.clearTimeout(t);
-  }, [parsedAmount]);
-
-  const quoteQuery = useQuery<TradeQuoteResponse>({
-    queryKey: ["trade-quote", marketId, sideApi, action, debouncedAmount],
-    enabled: !!marketId && !!request && !!debouncedAmount,
-    staleTime: 500,
-    retry: false,
-    keepPreviousData: true,
-    queryFn: async () => {
-      return getTradeQuote(request, marketId, {
-        side: sideApi,
-        action,
-        amount: debouncedAmount!,
-      });
-    },
-  });
-
-  const quote = quoteQuery.data;
-
-  const expectedPrice = quote?.averagePrice;
-
-  const isQuoteForCurrentAmount = useMemo(() => {
-    if (parsedAmount === undefined || debouncedAmount === undefined) return false;
-    return Math.abs(debouncedAmount - parsedAmount) < 1e-9;
-  }, [parsedAmount, debouncedAmount]);
-
-  const canTrade = !!marketId && !!request && !!user && parsedAmount !== undefined && quote !== undefined && isQuoteForCurrentAmount;
+  const limitPrice = parsedPrice;
+  const canSubmit =
+    !!marketId &&
+    !!request &&
+    !!user &&
+    parsedQuantity !== undefined &&
+    Number.isFinite(limitPrice) &&
+    limitPrice > 0 &&
+    limitPrice < 1;
+  const canTrade = canSubmit;
 
   const tradeMutation = useMutation({
     mutationFn: async () => {
-      if (!canTrade || expectedPrice === undefined || parsedAmount === undefined) return;
+      if (!canSubmit || parsedQuantity === undefined) return;
 
-      const payload: TradeExecuteInput = {
+      return placeOrder(request, marketId, {
         side: sideApi,
         action,
-        amount: parsedAmount,
-        maxSlippage: Number.isFinite(maxSlippage) ? Math.max(0, Math.min(50, maxSlippage)) : 2,
-        expectedPrice,
-      };
-
-      return executeTrade(request, marketId, payload);
+        price: limitPrice,
+        quantity: parsedQuantity,
+      });
     },
-    onSuccess: async (result) => {
-      if (!result) return;
-      toast.success(`Trade executed (avg price: ${Math.round(result.averagePrice * 100)}¢)`);
+    onSuccess: async (order) => {
+      if (!order) return;
+      toast.success(`Order placed: ${action.toUpperCase()} ${side} @ ${Math.round(limitPrice * 100)}¢`);
 
       // Market-derived UI: refresh chart/stats and recent trades.
       await queryClient.invalidateQueries({ queryKey: ["market", marketId] });
@@ -96,6 +73,8 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
       await queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
       await queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
       await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      await queryClient.invalidateQueries({ queryKey: ["order-book", marketId] });
+      await queryClient.invalidateQueries({ queryKey: ["my-orders", marketId] });
     },
     onError: (err) => {
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;
@@ -104,8 +83,47 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
     },
   });
 
-  const amountLabel = action === "buy" ? "Amount ($)" : "Shares to sell";
-  const quickAmounts = action === "buy" ? [10, 25, 50, 100] : [1, 5, 10, 25];
+  const quickPrices = [0.4, 0.5, 0.6, 0.7];
+  const quickQty = [1, 5, 10, 25];
+
+  const orderBookQuery = useQuery({
+    queryKey: ["order-book", marketId],
+    queryFn: () => getOrderBook(request, marketId, 5),
+    enabled: !!marketId && !!request,
+    refetchInterval: 3000,
+  });
+
+  const myOrdersQuery = useQuery({
+    queryKey: ["my-orders", marketId],
+    queryFn: () => getMyOrders(request, { marketId, page: 1, limit: 20 }),
+    enabled: !!marketId && !!request && !!user,
+    refetchInterval: 3000,
+  });
+
+  const cancelMutation = useMutation({
+    mutationFn: async (orderId: string) => cancelOrder(request, orderId),
+    onSuccess: async () => {
+      toast.success("Order cancelled");
+      await queryClient.invalidateQueries({ queryKey: ["my-orders", marketId] });
+      await queryClient.invalidateQueries({ queryKey: ["order-book", marketId] });
+    },
+    onError: (err) => {
+      const maybeMessage = (err as { message?: unknown } | undefined)?.message;
+      toast.error(typeof maybeMessage === "string" ? maybeMessage : "Cancel failed");
+    },
+  });
+
+  const selectedBook = useMemo(() => {
+    const b = orderBookQuery.data;
+    if (!b) return { bids: [], asks: [] } as const;
+    if (sideApi === "yes") return { bids: b.yesBids, asks: b.yesAsks } as const;
+    return { bids: b.noBids, asks: b.noAsks } as const;
+  }, [orderBookQuery.data, sideApi]);
+
+  const myOpenOrders = useMemo(() => {
+    const rows = myOrdersQuery.data?.data ?? [];
+    return rows.filter((o) => ["open", "partially_filled", "pending"].includes(String(o.status)));
+  }, [myOrdersQuery.data]);
 
   return (
     <div className="rounded-xl bg-card border border-border/50 p-4">
@@ -147,68 +165,72 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
         ))}
       </div>
 
-      {/* Amount input */}
+      {/* Price input */}
       <div className="mb-4">
-        <label className="text-xs text-muted-foreground mb-1.5 block">{amountLabel}</label>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Limit price (0..1)</label>
         <input
           type="number"
-          value={amount}
-          onChange={(e) => setAmount(e.target.value)}
-          placeholder="0.00"
+          value={priceInput}
+          onChange={(e) => setPriceInput(e.target.value)}
+          min={0.01}
+          max={0.99}
+          step={0.01}
+          placeholder={side === "YES" ? "0.60" : "0.40"}
           className="w-full bg-secondary rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
         />
         <div className="flex gap-2 mt-2">
-          {quickAmounts.map((v) => (
+          {quickPrices.map((v) => (
             <button
               key={v}
-              onClick={() => setAmount(String(v))}
+              onClick={() => setPriceInput(String(v))}
               className="flex-1 py-1 text-xs font-medium bg-secondary rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
             >
-              {action === "buy" ? `$${v}` : `${v}`}
+              {v.toFixed(2)}
             </button>
           ))}
         </div>
       </div>
 
-      {/* Slippage */}
+      {/* Quantity input */}
       <div className="mb-4">
-        <label className="text-xs text-muted-foreground mb-1.5 block">Max slippage (%)</label>
+        <label className="text-xs text-muted-foreground mb-1.5 block">Quantity (shares)</label>
         <input
           type="number"
-          min={0}
-          max={50}
-          step={0.5}
-          value={maxSlippage}
-          onChange={(e) => setMaxSlippage(Number(e.target.value))}
+          value={quantityInput}
+          onChange={(e) => setQuantityInput(e.target.value)}
+          placeholder="0.00"
           className="w-full bg-secondary rounded-lg px-3 py-2.5 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
         />
+        <div className="flex gap-2 mt-2">
+          {quickQty.map((v) => (
+            <button
+              key={v}
+              onClick={() => setQuantityInput(String(v))}
+              className="flex-1 py-1 text-xs font-medium bg-secondary rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+            >
+              {v}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Summary */}
       <div className="space-y-2 mb-4 text-xs">
         <div className="flex justify-between text-muted-foreground">
-          <span>Est. avg price</span>
-          <span className="text-foreground font-medium">
-            {quoteQuery.isLoading ? "…" : quote ? `${Math.round(quote.averagePrice * 100)}¢` : "—"}
-          </span>
+          <span>Limit price</span>
+          <span className="text-foreground font-medium">{parsedPrice !== undefined ? `${Math.round(parsedPrice * 100)}¢` : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>{action === "buy" ? "Est. shares" : "Est. shares sold"}</span>
-          <span className="text-foreground font-medium">
-            {quoteQuery.isLoading ? "…" : quote ? quote.shares.toFixed(4) : "—"}
-          </span>
+          <span>Shares</span>
+          <span className="text-foreground font-medium">{parsedQuantity !== undefined ? parsedQuantity.toFixed(4) : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>{action === "buy" ? "Est. cost" : "Est. proceeds"}</span>
-          <span className="text-success font-medium">
-            {quoteQuery.isLoading ? "…" : quote ? `$${quote.totalCost.toFixed(2)}` : "—"}
-          </span>
+          <span>Notional</span>
+          <span className="text-success font-medium">{parsedPrice !== undefined && parsedQuantity !== undefined ? `$${(parsedPrice * parsedQuantity).toFixed(2)}` : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Price impact</span>
-          <span className="text-foreground font-medium">
-            {quoteQuery.isLoading ? "…" : quote ? `${quote.priceImpact.toFixed(2)}%` : "—"}
-          </span>
+          <span>Rule</span>
+          <span className="text-foreground font-medium">Limit order</span>
         </div>
       </div>
 
@@ -220,7 +242,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
             ? "bg-success text-success-foreground hover:brightness-110"
             : "bg-danger text-danger-foreground hover:brightness-110"
         }`}
-        disabled={!canTrade || quoteQuery.isFetching || tradeMutation.isPending}
+        disabled={!canTrade || tradeMutation.isPending}
         onClick={() => {
           if (!user) {
             toast.error("Please login to trade.");
@@ -231,6 +253,65 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
       >
         {tradeMutation.isPending ? "Submitting..." : action === "buy" ? "Buy" : "Sell"} {side}
       </motion.button>
+
+      <div className="mt-5 pt-4 border-t border-border/50">
+        <h4 className="text-xs font-semibold text-muted-foreground mb-2">Order Book ({side})</h4>
+        <div className="grid grid-cols-2 gap-3 text-xs">
+          <div>
+            <div className="text-muted-foreground mb-1">Bids</div>
+            <div className="space-y-1">
+              {selectedBook.bids.slice(0, 5).map((lvl, idx) => (
+                <div key={`b-${idx}`} className="flex justify-between">
+                  <span className="text-success">{Math.round(lvl.price * 100)}¢</span>
+                  <span>{lvl.quantity.toFixed(2)}</span>
+                </div>
+              ))}
+              {selectedBook.bids.length === 0 ? <div className="text-muted-foreground">No bids</div> : null}
+            </div>
+          </div>
+          <div>
+            <div className="text-muted-foreground mb-1">Asks</div>
+            <div className="space-y-1">
+              {selectedBook.asks.slice(0, 5).map((lvl, idx) => (
+                <div key={`a-${idx}`} className="flex justify-between">
+                  <span className="text-danger">{Math.round(lvl.price * 100)}¢</span>
+                  <span>{lvl.quantity.toFixed(2)}</span>
+                </div>
+              ))}
+              {selectedBook.asks.length === 0 ? <div className="text-muted-foreground">No asks</div> : null}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-5 pt-4 border-t border-border/50">
+        <h4 className="text-xs font-semibold text-muted-foreground mb-2">My Open Orders</h4>
+        <div className="space-y-2 max-h-52 overflow-auto pr-1">
+          {myOpenOrders.map((o) => (
+            <div key={o.id} className="rounded-md bg-secondary/60 px-2 py-2 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-medium">
+                  {String(o.action).toUpperCase()} {String(o.side).toUpperCase()} @ {Math.round(o.price * 100)}¢
+                </span>
+                <button
+                  className="text-muted-foreground hover:text-foreground disabled:opacity-50"
+                  onClick={() => cancelMutation.mutate(o.id)}
+                  disabled={cancelMutation.isPending}
+                >
+                  Cancel
+                </button>
+              </div>
+              <div className="text-muted-foreground mt-1">
+                Qty {o.quantity.toFixed(4)} | Filled {o.filledQuantity.toFixed(4)} | Remaining {o.remainingQuantity.toFixed(4)}
+              </div>
+            </div>
+          ))}
+          {!user ? <div className="text-xs text-muted-foreground">Login to view your orders</div> : null}
+          {user && !myOrdersQuery.isLoading && myOpenOrders.length === 0 ? (
+            <div className="text-xs text-muted-foreground">No open orders</div>
+          ) : null}
+        </div>
+      </div>
     </div>
   );
 }

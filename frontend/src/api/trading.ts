@@ -1,32 +1,14 @@
 import type { AuthRequest } from "./markets";
 
-export type TradeSide = "yes" | "no";
-export type TradeAction = "buy" | "sell";
-
-export type TradeQuoteInput = {
-  side: TradeSide;
-  action: TradeAction;
-  amount: number; // USD for buy, shares for sell
+export type MarketTradeInput = {
+  side: "yes" | "no";
+  action: "buy" | "sell";
+  amount: number;
+  maxSlippage?: number;
+  expectedPrice?: number;
 };
 
-export type TradeQuoteResponse = {
-  shares: number;
-  totalCost: number; // USD spent (buy) or received (sell)
-  averagePrice: number; // 0..1
-  priceImpact: number; // %
-  fee: number;
-  priceAfter: number; // 0..1 for selected side
-};
-
-export type TradeExecuteInput = {
-  side: TradeSide;
-  action: TradeAction;
-  amount: number; // USD for buy, shares for sell
-  maxSlippage?: number; // % (0..50)
-  expectedPrice?: number; // 0..1, optional slippage guard
-};
-
-export type TradeExecuteResponse = {
+export type MarketTradeResult = {
   tradeId: string;
   sharesTransacted: number;
   totalCost: number;
@@ -38,27 +20,33 @@ export type TradeExecuteResponse = {
   newBalance: number;
 };
 
-export async function getTradeQuote(
-  request: AuthRequest,
-  marketId: string,
-  input: TradeQuoteInput,
-) {
-  return request<TradeQuoteResponse>(`/trading/${marketId}/quote`, {
+export type MarketQuoteInput = {
+  side: "yes" | "no";
+  action: "buy" | "sell";
+  amount: number;
+};
+
+export type MarketQuoteResult = {
+  shares: number;
+  totalCost: number;
+  averagePrice: number;
+  priceImpact: number;
+  fee: number;
+  priceAfter: number;
+};
+
+export async function getTradeQuote(request: AuthRequest, marketId: string, input: MarketQuoteInput) {
+  return request<MarketQuoteResult>(`/trading/${marketId}/quote`, {
     method: "POST",
     body: input,
     authRequired: false,
   });
 }
 
-export async function executeTrade(
-  request: AuthRequest,
-  marketId: string,
-  input: TradeExecuteInput,
-) {
-  return request<TradeExecuteResponse>(`/trading/${marketId}/trade`, {
+export async function executeMarketTrade(request: AuthRequest, marketId: string, input: MarketTradeInput) {
+  return request<MarketTradeResult>(`/trading/${marketId}/trade`, {
     method: "POST",
     body: input,
     authRequired: true,
   });
 }
-

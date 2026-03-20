@@ -60,7 +60,6 @@ export type CreateMarketInput = {
   resolutionCriteria: string;
   categoryId?: string;
   closesAt: string; // datetime string
-  initialLiquidity: number;
   imageUrl?: string;
   tags?: string[];
   metadata?: Record<string, unknown>;

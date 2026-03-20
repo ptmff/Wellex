@@ -32,7 +32,6 @@ router.post(
   async (req: Request, res: Response) => {
     const validated = TradeDto.parse(req.body);
     const service = getOrderBookService(req);
-
     const result = await service.executeMarketTrade({
       userId: req.user!.id,
       marketId: req.params.marketId,
@@ -53,7 +52,6 @@ router.post(
   async (req: Request, res: Response) => {
     const validated = QuoteDto.parse(req.body);
     const service = getOrderBookService(req);
-
     const quote = await service.getTradeQuote(
       req.params.marketId,
       validated.side,

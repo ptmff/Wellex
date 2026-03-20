@@ -153,11 +153,15 @@ export function usePortfolioWebSocket({
           return;
         }
 
-        if (message.type === "price_update" || message.type === "trade") {
+        if (message.type === "price_update" || message.type === "trade" || message.type === "order_filled") {
           const payload = message.payload;
           if (isObject(payload)) {
-            const marketId = payload.marketId;
-            if (typeof marketId === "string" && marketIdSetRef.current.has(marketId)) {
+            const payloadAny = payload as Record<string, unknown>;
+            const marketIdCandidate =
+              (typeof payloadAny.marketId === "string" ? payloadAny.marketId : undefined) ??
+              (typeof (payloadAny as any).order?.marketId === "string" ? (payloadAny as any).order.marketId : undefined);
+
+            if (typeof marketIdCandidate === "string" && marketIdSetRef.current.has(marketIdCandidate)) {
               invalidatePositionsOnly();
             }
           }

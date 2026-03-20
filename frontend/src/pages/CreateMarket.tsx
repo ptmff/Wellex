@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { Eye, Calendar, Tag, DollarSign, HelpCircle } from "lucide-react";
+import { Eye, Calendar, Tag, HelpCircle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/auth/AuthContext";
 import { useQuery } from "@tanstack/react-query";
@@ -14,7 +14,6 @@ export default function CreateMarket() {
   const [resolutionCriteria, setResolutionCriteria] = useState("");
   const [categoryId, setCategoryId] = useState<string>("");
   const [endDate, setEndDate] = useState("");
-  const [liquidity, setLiquidity] = useState("");
   const [preview, setPreview] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,6 +39,9 @@ export default function CreateMarket() {
     const map = new Map<string, { id: string; name: string }>();
     for (const m of items as BackendMarket[]) {
       if (!m.category) continue;
+      // Backend list() может возвращать категорию без id, если поле не выбрано в SELECT.
+      // Но backend сейчас исправлен — id должен приходить, а здесь делаем защиту.
+      if (!m.category.id) continue;
       if (!map.has(m.category.id)) map.set(m.category.id, { id: m.category.id, name: m.category.name });
     }
     return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
@@ -48,29 +50,51 @@ export default function CreateMarket() {
   const selectedCategoryName = useMemo(() => categories.find((c) => c.id === categoryId)?.name ?? "", [categories, categoryId]);
 
   const submit = async () => {
-    if (!title.trim()) return;
-    if (!description.trim()) return;
-    if (!resolutionCriteria.trim()) return;
-    if (!endDate) return;
-    if (!liquidity) return;
+    const t = title.trim();
+    const d = description.trim();
+    const r = resolutionCriteria.trim();
+    const end = endDate;
+    if (!t || !d || !r || !end) return;
 
-    const initialLiquidity = Number(liquidity);
-    if (!Number.isFinite(initialLiquidity) || initialLiquidity <= 0) {
-      toast.error("Initial liquidity must be a positive number");
-      return;
-    }
+    // Constraints mirror backend DTO:
+    // title: min 10, max 500
+    // description: min 20, max 5000
+    // resolutionCriteria: min 20, max 2000
 
     // Convert `YYYY-MM-DD` from `<input type="date">` into a datetime string.
     // We set time to the end of the day in the local timezone to reduce accidental "past" values.
-    const closesAt = new Date(`${endDate}T23:59:59`).toISOString();
+    const closesAtDate = new Date(`${end}T23:59:59`);
+    if (Number.isNaN(closesAtDate.getTime())) {
+      toast.error("Invalid end date");
+      return;
+    }
+
+    // backend requires closesAt > now + 1 hour
+    if (closesAtDate.getTime() <= Date.now() + 60 * 60 * 1000) {
+      toast.error("Market must close at least 1 hour from now");
+      return;
+    }
+    const closesAt = closesAtDate.toISOString();
+
+    if (t.length < 10 || t.length > 500) {
+      toast.error("Question must be between 10 and 500 characters");
+      return;
+    }
+    if (d.length < 20 || d.length > 5000) {
+      toast.error("Description must be between 20 and 5000 characters");
+      return;
+    }
+    if (r.length < 20 || r.length > 2000) {
+      toast.error("Resolution criteria must be between 20 and 2000 characters");
+      return;
+    }
 
     const payload: CreateMarketInput = {
-      title: title.trim(),
-      description: description.trim(),
-      resolutionCriteria: resolutionCriteria.trim(),
+      title: t,
+      description: d,
+      resolutionCriteria: r,
       categoryId: categoryId || undefined,
       closesAt,
-      initialLiquidity,
     };
 
     try {
@@ -165,20 +189,6 @@ export default function CreateMarket() {
               />
             </div>
 
-            {/* Initial Liquidity */}
-            <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                <DollarSign className="h-3 w-3" /> Initial Liquidity
-              </label>
-              <input
-                type="number"
-                value={liquidity}
-                onChange={(e) => setLiquidity(e.target.value)}
-                placeholder="500"
-                className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
-              />
-            </div>
-
             {/* Actions */}
             <div className="flex gap-3 pt-2">
               <button
@@ -190,11 +200,11 @@ export default function CreateMarket() {
               <motion.button
                 whileTap={{ scale: 0.98 }}
                 className="flex-1 py-2.5 rounded-xl bg-primary text-primary-foreground text-sm font-semibold hover:brightness-110 transition-all"
-                disabled={!title || !description || !resolutionCriteria || !endDate || !liquidity || submitting}
+                disabled={!title || !description || !resolutionCriteria || !endDate || submitting}
                 onClick={() => {
                   // Keep the current flow: open preview first.
                   // The actual submit is in the preview step.
-                  if (title && description && resolutionCriteria && endDate && liquidity) setPreview(true);
+                  if (title && description && resolutionCriteria && endDate) setPreview(true);
                 }}
               >
                 Create Market
@@ -221,8 +231,7 @@ export default function CreateMarket() {
               )}
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
                 <span>Ends: {endDate || "TBD"}</span>
-                <span>Liquidity: ${liquidity || "0"}</span>
-                <span>Starting: 50% / 50%</span>
+                <span>Market starts empty</span>
               </div>
             </div>
 

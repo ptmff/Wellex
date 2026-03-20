@@ -198,6 +198,11 @@ export class OrderBookService {
 
       // Attempt immediate matching
       await this.matchOrders(trx, marketId, order.id);
+      // Bootstrapping matching on an empty market:
+      // BUY YES can be paired with BUY NO when their prices sum to >= 1.
+      if (validated.action === 'buy') {
+        await this.matchComplementaryBuyOrders(trx, marketId, order.id);
+      }
 
       // Invalidate order book cache
       await orderBookCache.del(`book:${marketId}`);
@@ -327,6 +332,261 @@ export class OrderBookService {
 
       takerRemaining = new Decimal(taker.remaining_quantity);
     }
+  }
+
+  private async matchComplementaryBuyOrders(
+    trx: any,
+    marketId: string,
+    takerOrderId: string
+  ): Promise<void> {
+    const taker = await trx('orders')
+      .where('id', takerOrderId)
+      .forUpdate()
+      .first();
+
+    if (!taker) return;
+    if (taker.action !== 'buy') return;
+    if (!['open', 'partially_filled'].includes(taker.status)) return;
+
+    const takerSide = taker.side as 'yes' | 'no';
+    const oppositeSide: 'yes' | 'no' = takerSide === 'yes' ? 'no' : 'yes';
+    const takerPrice = new Decimal(taker.price);
+    const minOppositePrice = new Decimal(1).minus(takerPrice);
+    const EPS = new Decimal('0.0000001');
+
+    let takerRemaining = new Decimal(taker.remaining_quantity);
+
+    const makers = await trx('orders')
+      .where({
+        market_id: marketId,
+        action: 'buy',
+        side: oppositeSide,
+        type: 'limit',
+      })
+      .whereIn('status', ['open', 'partially_filled'])
+      .andWhere('id', '!=', taker.id)
+      .andWhere('price', '>=', minOppositePrice.toFixed(8))
+      .orderBy('price', 'desc')
+      .orderBy('created_at', 'asc')
+      .forUpdate()
+      .select('*');
+
+    for (const maker of makers) {
+      if (takerRemaining.lte(EPS)) break;
+
+      const makerPrice = new Decimal(maker.price);
+      if (takerPrice.plus(makerPrice).lt(1)) break;
+
+      const makerRemaining = new Decimal(maker.remaining_quantity);
+      if (makerRemaining.lte(EPS)) continue;
+
+      const fillQty = Decimal.min(takerRemaining, makerRemaining);
+      if (fillQty.lte(EPS)) continue;
+
+      await this.executeComplementaryBuyFill(trx, marketId, taker, maker, fillQty);
+
+      taker.filled_quantity = new Decimal(taker.filled_quantity).plus(fillQty).toFixed(8);
+      taker.remaining_quantity = new Decimal(taker.remaining_quantity).minus(fillQty).toFixed(8);
+      takerRemaining = new Decimal(taker.remaining_quantity);
+    }
+  }
+
+  private async executeComplementaryBuyFill(
+    trx: any,
+    marketId: string,
+    buyOrderA: any,
+    buyOrderB: any,
+    fillQty: Decimal
+  ): Promise<void> {
+    const sideA = buyOrderA.side as 'yes' | 'no';
+    const sideB = buyOrderB.side as 'yes' | 'no';
+    if (sideA === sideB) {
+      throw new AppError(ErrorCode.INTERNAL_ERROR, 'Complementary fill requires opposite sides', 500);
+    }
+
+    const priceA = new Decimal(buyOrderA.price);
+    const priceB = new Decimal(buyOrderB.price);
+    const principalA = fillQty.mul(priceA);
+    const principalB = fillQty.mul(priceB);
+    const feeA = principalA.mul(this.FEE_RATE);
+    const feeB = principalB.mul(this.FEE_RATE);
+    const reserveA = principalA.plus(feeA);
+    const reserveB = principalB.plus(feeB);
+    const collateral = fillQty;
+    const surplus = Decimal.max(0, principalA.plus(principalB).minus(collateral));
+    const platformCredit = feeA.plus(feeB).plus(surplus);
+
+    const orderAFilled = new Decimal(buyOrderA.filled_quantity).plus(fillQty);
+    const orderARemaining = new Decimal(buyOrderA.remaining_quantity).minus(fillQty);
+    const orderAStatus = orderARemaining.lte(0.000001) ? 'filled' : 'partially_filled';
+    await trx('orders')
+      .where('id', buyOrderA.id)
+      .update({
+        filled_quantity: orderAFilled.toFixed(8),
+        remaining_quantity: Decimal.max(0, orderARemaining).toFixed(8),
+        status: orderAStatus,
+        average_fill_price: priceA.toFixed(8),
+        updated_at: new Date(),
+      });
+
+    const orderBFilled = new Decimal(buyOrderB.filled_quantity).plus(fillQty);
+    const orderBRemaining = new Decimal(buyOrderB.remaining_quantity).minus(fillQty);
+    const orderBStatus = orderBRemaining.lte(0.000001) ? 'filled' : 'partially_filled';
+    await trx('orders')
+      .where('id', buyOrderB.id)
+      .update({
+        filled_quantity: orderBFilled.toFixed(8),
+        remaining_quantity: Decimal.max(0, orderBRemaining).toFixed(8),
+        status: orderBStatus,
+        average_fill_price: priceB.toFixed(8),
+        updated_at: new Date(),
+      });
+
+    await this.upsertPositionFill(trx, buyOrderA.user_id, marketId, sideA, 'buy', fillQty, priceA);
+    await this.upsertPositionFill(trx, buyOrderB.user_id, marketId, sideB, 'buy', fillQty, priceB);
+
+    const balanceA = await trx('balances').where('user_id', buyOrderA.user_id).forUpdate().first();
+    const aAvailBefore = new Decimal(balanceA.available_cash ?? balanceA.available);
+    const aResBefore = new Decimal(balanceA.reserved_cash ?? balanceA.reserved);
+    const aTotalBefore = aAvailBefore.plus(aResBefore);
+    await trx('balances')
+      .where('user_id', buyOrderA.user_id)
+      .update({
+        reserved_cash: trx.raw('reserved_cash - ?', [reserveA.toFixed(8)]),
+        reserved: trx.raw('reserved - ?', [reserveA.toFixed(8)]),
+        total: trx.raw('total - ?', [reserveA.toFixed(8)]),
+        updated_at: new Date(),
+      });
+    await trx('balance_transactions').insert({
+      user_id: buyOrderA.user_id,
+      type: 'trade_debit',
+      amount: reserveA.toFixed(8),
+      balance_before: aTotalBefore.toFixed(8),
+      balance_after: aTotalBefore.minus(reserveA).toFixed(8),
+      reference_type: 'trade',
+      reference_id: null,
+      description: `Complementary fill: bought ${fillQty.toFixed(4)} ${sideA.toUpperCase()} @ ${priceA.toFixed(4)}`,
+    });
+
+    const balanceB = await trx('balances').where('user_id', buyOrderB.user_id).forUpdate().first();
+    const bAvailBefore = new Decimal(balanceB.available_cash ?? balanceB.available);
+    const bResBefore = new Decimal(balanceB.reserved_cash ?? balanceB.reserved);
+    const bTotalBefore = bAvailBefore.plus(bResBefore);
+    await trx('balances')
+      .where('user_id', buyOrderB.user_id)
+      .update({
+        reserved_cash: trx.raw('reserved_cash - ?', [reserveB.toFixed(8)]),
+        reserved: trx.raw('reserved - ?', [reserveB.toFixed(8)]),
+        total: trx.raw('total - ?', [reserveB.toFixed(8)]),
+        updated_at: new Date(),
+      });
+    await trx('balance_transactions').insert({
+      user_id: buyOrderB.user_id,
+      type: 'trade_debit',
+      amount: reserveB.toFixed(8),
+      balance_before: bTotalBefore.toFixed(8),
+      balance_after: bTotalBefore.minus(reserveB).toFixed(8),
+      reference_type: 'trade',
+      reference_id: null,
+      description: `Complementary fill: bought ${fillQty.toFixed(4)} ${sideB.toUpperCase()} @ ${priceB.toFixed(4)}`,
+    });
+
+    const feeAccount = await this.getFeeAccount(trx);
+    if (feeAccount && platformCredit.gt(0)) {
+      const platformBalance = await trx('balances').where('user_id', feeAccount.id).forUpdate().first();
+      const pAvailBefore = new Decimal(platformBalance.available_cash ?? platformBalance.available);
+      const pResBefore = new Decimal(platformBalance.reserved_cash ?? platformBalance.reserved);
+      const pTotalBefore = pAvailBefore.plus(pResBefore);
+      await trx('balances')
+        .where('user_id', feeAccount.id)
+        .update({
+          available_cash: trx.raw('available_cash + ?', [platformCredit.toFixed(8)]),
+          available: trx.raw('available + ?', [platformCredit.toFixed(8)]),
+          total: trx.raw('total + ?', [platformCredit.toFixed(8)]),
+          updated_at: new Date(),
+        });
+      await trx('balance_transactions').insert({
+        user_id: feeAccount.id,
+        type: 'fee',
+        amount: platformCredit.toFixed(8),
+        balance_before: pTotalBefore.toFixed(8),
+        balance_after: pTotalBefore.plus(platformCredit).toFixed(8),
+        reference_type: 'trade',
+        reference_id: null,
+        description: `Complementary buy spread+fees for market ${marketId}`,
+      });
+    }
+
+    const yesPrice = sideA === 'yes' ? priceA : new Decimal(1).minus(priceB);
+    const noPrice = new Decimal(1).minus(yesPrice);
+    const marketVolume = principalA.plus(principalB);
+
+    await trx('markets')
+      .where('id', marketId)
+      .update({
+        current_yes_price: yesPrice.toFixed(8),
+        current_no_price: noPrice.toFixed(8),
+        yes_shares: trx.raw('yes_shares + ?', [fillQty.toFixed(8)]),
+        no_shares: trx.raw('no_shares + ?', [fillQty.toFixed(8)]),
+        liquidity_total: trx.raw('liquidity_total + ?', [collateral.toFixed(8)]),
+        volume_24h: trx.raw('volume_24h + ?', [marketVolume.toFixed(8)]),
+        volume_total: trx.raw('volume_total + ?', [marketVolume.toFixed(8)]),
+        trade_count: trx.raw('trade_count + 2'),
+        updated_at: new Date(),
+      });
+    await trx('price_history').insert({
+      market_id: marketId,
+      yes_price: yesPrice.toFixed(8),
+      no_price: noPrice.toFixed(8),
+      volume: marketVolume.toFixed(8),
+      trade_count: 2,
+      recorded_at: new Date(),
+    });
+
+    const [tradeA] = await trx('trades')
+      .insert({
+        market_id: marketId,
+        buyer_id: buyOrderA.user_id,
+        seller_id: null,
+        buyer_order_id: buyOrderA.id,
+        seller_order_id: null,
+        side: sideA,
+        trade_type: 'order_book',
+        price: priceA.toFixed(8),
+        quantity: fillQty.toFixed(8),
+        total_value: principalA.toFixed(8),
+        fee: feeA.toFixed(8),
+        yes_price_before: yesPrice.toFixed(8),
+        yes_price_after: yesPrice.toFixed(8),
+        price_impact: '0',
+        executed_at: new Date(),
+        metadata: JSON.stringify({ complementaryMint: true, counterpartyOrderId: buyOrderB.id }),
+      })
+      .returning('*');
+
+    const [tradeB] = await trx('trades')
+      .insert({
+        market_id: marketId,
+        buyer_id: buyOrderB.user_id,
+        seller_id: null,
+        buyer_order_id: buyOrderB.id,
+        seller_order_id: null,
+        side: sideB,
+        trade_type: 'order_book',
+        price: priceB.toFixed(8),
+        quantity: fillQty.toFixed(8),
+        total_value: principalB.toFixed(8),
+        fee: feeB.toFixed(8),
+        yes_price_before: yesPrice.toFixed(8),
+        yes_price_after: yesPrice.toFixed(8),
+        price_impact: '0',
+        executed_at: new Date(),
+        metadata: JSON.stringify({ complementaryMint: true, counterpartyOrderId: buyOrderA.id }),
+      })
+      .returning('*');
+
+    void tradeA;
+    void tradeB;
   }
 
   private async executeFill(
@@ -1404,16 +1664,10 @@ export class OrderBookService {
       let totalPayouts = new Decimal(0);
       let winnersCount = 0;
 
-      // Resolution cash comes from the market creator escrow (initialLiquidity locked as reserved_cash)
-      // and, for INVALID, optionally from the platform fee sink.
-      const creatorId = market.creator_id as string;
-      const creatorBalance = await trx('balances')
-        .where('user_id', creatorId)
-        .forUpdate()
-        .first();
-      const creatorAvailRemaining = new Decimal(creatorBalance?.available_cash ?? creatorBalance?.available ?? 0);
-      let creatorReservedRemaining = new Decimal(creatorBalance?.reserved_cash ?? creatorBalance?.reserved ?? 0);
-      let creatorTotalRemaining = creatorAvailRemaining.plus(creatorReservedRemaining);
+      // Resolution cash source:
+      // - market collateral pool (liquidity_total) built during complementary BUY↔BUY minting
+      // - platform fee/surplus sink only as a fallback
+      let poolRemaining = new Decimal(market.liquidity_total ?? 0);
 
       const feeAccount = await this.getFeeAccount(trx);
       let feeAvailableRemaining = new Decimal(0);
@@ -1434,6 +1688,47 @@ export class OrderBookService {
         .forUpdate()
         .select('*');
 
+      // INVALID settlement:
+      // - refund each user their net cashflow in this market:
+      //   net_spend = sum(principal paid) - sum(principal received), where principal == trades.total_value
+      // - refund only if net_spend > 0 (variant B)
+      // - trade fees are excluded by construction (we do not use trades.fee)
+      let invalidRefundsByUser: Map<string, Decimal> | null = null;
+      if (outcome === 'invalid') {
+        invalidRefundsByUser = new Map();
+
+        const buyerRows = await trx('trades')
+          .where({ market_id: marketId })
+          .groupBy('buyer_id')
+          .select('buyer_id')
+          .select(trx.raw('SUM(total_value) as principal_paid'));
+
+        for (const r of buyerRows) {
+          const userId = r.buyer_id as string;
+          const principalPaid = new Decimal(r.principal_paid ?? 0);
+          invalidRefundsByUser.set(userId, principalPaid);
+        }
+
+        const sellerRows = await trx('trades')
+          .where({ market_id: marketId })
+          .groupBy('seller_id')
+          .select('seller_id')
+          .select(trx.raw('SUM(total_value) as principal_received'));
+
+        for (const r of sellerRows) {
+          const userId = r.seller_id as string;
+          const principalReceived = new Decimal(r.principal_received ?? 0);
+          const prev = invalidRefundsByUser.get(userId) ?? new Decimal(0);
+          invalidRefundsByUser.set(userId, prev.minus(principalReceived));
+        }
+
+        // Keep only positive net_spend refunds
+        for (const [userId, netSpend] of invalidRefundsByUser.entries()) {
+          if (!netSpend.gt(0)) invalidRefundsByUser.delete(userId);
+          else invalidRefundsByUser.set(userId, netSpend);
+        }
+      }
+
       for (const pos of positions) {
         const qty = new Decimal(pos.quantity);
 
@@ -1451,126 +1746,15 @@ export class OrderBookService {
           });
 
         if (outcome === 'invalid') {
-          // INVALID: refund user's net spend stored on the position.
-          const refund = new Decimal(pos.total_invested ?? 0);
-
-          // Debit resolution funds from:
-          // - creator reserved_cash (escrow)
-          // - fee sink (only if needed)
-          const fromCreator = Decimal.min(creatorReservedRemaining, refund);
-          const fromFee = refund.minus(fromCreator);
-
-          if (fromCreator.gt(0)) {
-            const balanceBefore = creatorTotalRemaining;
-            const balanceAfter = balanceBefore.minus(fromCreator);
-            await trx('balances')
-              .where('user_id', creatorId)
-              .update({
-                reserved_cash: trx.raw('reserved_cash - ?', [fromCreator.toFixed(8)]),
-                reserved: trx.raw('reserved - ?', [fromCreator.toFixed(8)]),
-                total: trx.raw('total - ?', [fromCreator.toFixed(8)]),
-                updated_at: new Date(),
-              });
-            await trx('balance_transactions').insert({
-              user_id: creatorId,
-              type: 'trade_debit',
-              amount: fromCreator.toFixed(8),
-              balance_before: balanceBefore.toFixed(8),
-              balance_after: balanceAfter.toFixed(8),
-              reference_type: 'market_resolution',
-              reference_id: marketId,
-              description: `Market resolved ${outcome.toUpperCase()} — escrow debited`,
-            });
-            creatorReservedRemaining = creatorReservedRemaining.minus(fromCreator);
-            creatorTotalRemaining = balanceAfter;
-          }
-
-          if (fromFee.gt(0)) {
-            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for invalid refund', 500);
-            const balanceBefore = feeTotalRemaining;
-            const balanceAfter = balanceBefore.minus(fromFee);
-            await trx('balances')
-              .where('user_id', feeAccount.id)
-              .update({
-                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
-                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
-                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
-                updated_at: new Date(),
-              });
-            await trx('balance_transactions').insert({
-              user_id: feeAccount.id,
-              type: 'trade_debit',
-              amount: fromFee.toFixed(8),
-              balance_before: balanceBefore.toFixed(8),
-              balance_after: balanceAfter.toFixed(8),
-              reference_type: 'market_resolution',
-              reference_id: marketId,
-              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited`,
-            });
-            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
-            feeTotalRemaining = balanceAfter;
-          }
-
-          const balance = await trx('balances')
-            .where('user_id', pos.user_id)
-            .forUpdate()
-            .first();
-          const availBefore = new Decimal(balance.available_cash ?? balance.available);
-
-          await trx('balances')
-            .where('user_id', pos.user_id)
-            .update({
-              available_cash: trx.raw('available_cash + ?', [refund.toFixed(8)]),
-              available: trx.raw('available + ?', [refund.toFixed(8)]),
-              total: trx.raw('total + ?', [refund.toFixed(8)]),
-              updated_at: new Date(),
-            });
-
-          totalPayouts = totalPayouts.plus(refund);
-          winnersCount++;
-          await trx('balance_transactions').insert({
-            user_id: pos.user_id,
-            type: 'refund',
-            amount: refund.toFixed(8),
-            balance_before: availBefore.toFixed(8),
-            balance_after: availBefore.plus(refund).toFixed(8),
-            reference_type: 'market_resolution',
-            reference_id: marketId,
-            description: `Market resolved as INVALID — refund for ${qty.toFixed(4)} ${pos.side.toUpperCase()} shares`,
-          });
           continue;
         }
 
         if (pos.side === outcome) {
           const payout = qty; // 1.0 per winning share
 
-          const fromCreator = Decimal.min(creatorReservedRemaining, payout);
-          const fromFee = payout.minus(fromCreator);
-
-          if (fromCreator.gt(0)) {
-            const balanceBefore = creatorTotalRemaining;
-            const balanceAfter = balanceBefore.minus(fromCreator);
-            await trx('balances')
-              .where('user_id', creatorId)
-              .update({
-                reserved_cash: trx.raw('reserved_cash - ?', [fromCreator.toFixed(8)]),
-                reserved: trx.raw('reserved - ?', [fromCreator.toFixed(8)]),
-                total: trx.raw('total - ?', [fromCreator.toFixed(8)]),
-                updated_at: new Date(),
-              });
-            await trx('balance_transactions').insert({
-              user_id: creatorId,
-              type: 'trade_debit',
-              amount: fromCreator.toFixed(8),
-              balance_before: balanceBefore.toFixed(8),
-              balance_after: balanceAfter.toFixed(8),
-              reference_type: 'market_resolution',
-              reference_id: marketId,
-              description: `Market resolved ${outcome.toUpperCase()} — escrow debited`,
-            });
-            creatorReservedRemaining = creatorReservedRemaining.minus(fromCreator);
-            creatorTotalRemaining = balanceAfter;
-          }
+          const fromPool = Decimal.min(poolRemaining, payout);
+          const fromFee = payout.minus(fromPool);
+          poolRemaining = poolRemaining.minus(fromPool);
 
           if (fromFee.gt(0)) {
             if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for payout', 500);
@@ -1628,6 +1812,77 @@ export class OrderBookService {
           });
         }
       }
+
+      if (outcome === 'invalid' && invalidRefundsByUser) {
+        for (const [userId, refund] of invalidRefundsByUser.entries()) {
+          const fromPool = Decimal.min(poolRemaining, refund);
+          const fromFee = refund.minus(fromPool);
+          poolRemaining = poolRemaining.minus(fromPool);
+
+          if (fromFee.gt(0)) {
+            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for invalid refund', 500);
+            const balanceBefore = feeTotalRemaining;
+            const balanceAfter = balanceBefore.minus(fromFee);
+            await trx('balances')
+              .where('user_id', feeAccount.id)
+              .update({
+                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
+                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
+                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
+                updated_at: new Date(),
+              });
+            await trx('balance_transactions').insert({
+              user_id: feeAccount.id,
+              type: 'trade_debit',
+              amount: fromFee.toFixed(8),
+              balance_before: balanceBefore.toFixed(8),
+              balance_after: balanceAfter.toFixed(8),
+              reference_type: 'market_resolution',
+              reference_id: marketId,
+              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited (INVALID refund)`,
+            });
+            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
+            feeTotalRemaining = balanceAfter;
+          }
+
+          const balance = await trx('balances')
+            .where('user_id', userId)
+            .forUpdate()
+            .first();
+          const availBefore = new Decimal(balance.available_cash ?? balance.available);
+
+          await trx('balances')
+            .where('user_id', userId)
+            .update({
+              available_cash: trx.raw('available_cash + ?', [refund.toFixed(8)]),
+              available: trx.raw('available + ?', [refund.toFixed(8)]),
+              total: trx.raw('total + ?', [refund.toFixed(8)]),
+              updated_at: new Date(),
+            });
+
+          totalPayouts = totalPayouts.plus(refund);
+          winnersCount++;
+          await trx('balance_transactions').insert({
+            user_id: userId,
+            type: 'refund',
+            amount: refund.toFixed(8),
+            balance_before: availBefore.toFixed(8),
+            balance_after: availBefore.plus(refund).toFixed(8),
+            reference_type: 'market_resolution',
+            reference_id: marketId,
+            description: `Market resolved as INVALID — refund net_spend for user ${userId}`,
+          });
+        }
+      }
+
+      await trx('markets')
+        .where('id', marketId)
+        .update({
+          liquidity_total: Decimal.max(0, poolRemaining).toFixed(8),
+          yes_shares: '0',
+          no_shares: '0',
+          updated_at: new Date(),
+        });
 
       return {
         totalPayouts: totalPayouts.toNumber(),
