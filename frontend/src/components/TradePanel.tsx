@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/auth/AuthContext";
 import { cancelOrder, getMyOrders, getOrderBook, placeOrder, type OrderAction, type OrderSide } from "@/api/orders";
+import { useI18n } from "@/i18n/I18nContext";
 
 interface TradePanelProps {
   marketId: string;
@@ -13,6 +14,7 @@ interface TradePanelProps {
 export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
   const queryClient = useQueryClient();
   const { request, user } = useAuth();
+  const { language } = useI18n();
 
   const [side, setSide] = useState<"YES" | "NO">("YES");
   const [priceInput, setPriceInput] = useState("");
@@ -78,7 +80,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
     },
     onError: (err) => {
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;
-      const message = typeof maybeMessage === "string" ? maybeMessage : "Trade failed";
+      const message = typeof maybeMessage === "string" ? maybeMessage : language === "ru" ? "Сделка не выполнена" : "Trade failed";
       toast.error(message);
     },
   });
@@ -103,13 +105,13 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
   const cancelMutation = useMutation({
     mutationFn: async (orderId: string) => cancelOrder(request, orderId),
     onSuccess: async () => {
-      toast.success("Order cancelled");
+      toast.success(language === "ru" ? "Ордер отменен" : "Order cancelled");
       await queryClient.invalidateQueries({ queryKey: ["my-orders", marketId] });
       await queryClient.invalidateQueries({ queryKey: ["order-book", marketId] });
     },
     onError: (err) => {
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;
-      toast.error(typeof maybeMessage === "string" ? maybeMessage : "Cancel failed");
+      toast.error(typeof maybeMessage === "string" ? maybeMessage : language === "ru" ? "Не удалось отменить" : "Cancel failed");
     },
   });
 
@@ -127,7 +129,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
 
   return (
     <div className="rounded-xl bg-card border border-border/50 p-4">
-      <h3 className="text-sm font-semibold mb-3">Trade</h3>
+      <h3 className="text-sm font-semibold mb-3">{language === "ru" ? "Торговля" : "Trade"}</h3>
 
       {/* Buy/Sell toggle */}
       <div className="flex gap-1 p-0.5 bg-secondary rounded-lg mb-3">
@@ -167,7 +169,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
 
       {/* Price input */}
       <div className="mb-4">
-        <label className="text-xs text-muted-foreground mb-1.5 block">Limit price (0..1)</label>
+        <label className="text-xs text-muted-foreground mb-1.5 block">{language === "ru" ? "Лимитная цена (0..1)" : "Limit price (0..1)"}</label>
         <input
           type="number"
           value={priceInput}
@@ -193,7 +195,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
 
       {/* Quantity input */}
       <div className="mb-4">
-        <label className="text-xs text-muted-foreground mb-1.5 block">Quantity (shares)</label>
+        <label className="text-xs text-muted-foreground mb-1.5 block">{language === "ru" ? "Количество (акции)" : "Quantity (shares)"}</label>
         <input
           type="number"
           value={quantityInput}
@@ -217,11 +219,11 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
       {/* Summary */}
       <div className="space-y-2 mb-4 text-xs">
         <div className="flex justify-between text-muted-foreground">
-          <span>Limit price</span>
+          <span>{language === "ru" ? "Лимитная цена" : "Limit price"}</span>
           <span className="text-foreground font-medium">{parsedPrice !== undefined ? `${Math.round(parsedPrice * 100)}¢` : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Shares</span>
+          <span>{language === "ru" ? "Акции" : "Shares"}</span>
           <span className="text-foreground font-medium">{parsedQuantity !== undefined ? parsedQuantity.toFixed(4) : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
@@ -229,8 +231,8 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
           <span className="text-success font-medium">{parsedPrice !== undefined && parsedQuantity !== undefined ? `$${(parsedPrice * parsedQuantity).toFixed(2)}` : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Rule</span>
-          <span className="text-foreground font-medium">Limit order</span>
+          <span>{language === "ru" ? "Тип" : "Rule"}</span>
+          <span className="text-foreground font-medium">{language === "ru" ? "Лимитный ордер" : "Limit order"}</span>
         </div>
       </div>
 
@@ -245,20 +247,20 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
         disabled={!canTrade || tradeMutation.isPending}
         onClick={() => {
           if (!user) {
-            toast.error("Please login to trade.");
+            toast.error(language === "ru" ? "Войдите, чтобы торговать." : "Please login to trade.");
             return;
           }
           tradeMutation.mutate();
         }}
       >
-        {tradeMutation.isPending ? "Submitting..." : action === "buy" ? "Buy" : "Sell"} {side}
+        {tradeMutation.isPending ? (language === "ru" ? "Отправка..." : "Submitting...") : action === "buy" ? (language === "ru" ? "Купить" : "Buy") : language === "ru" ? "Продать" : "Sell"} {side}
       </motion.button>
 
       <div className="mt-5 pt-4 border-t border-border/50">
-        <h4 className="text-xs font-semibold text-muted-foreground mb-2">Order Book ({side})</h4>
+        <h4 className="text-xs font-semibold text-muted-foreground mb-2">{language === "ru" ? "Стакан ордеров" : "Order Book"} ({side})</h4>
         <div className="grid grid-cols-2 gap-3 text-xs">
           <div>
-            <div className="text-muted-foreground mb-1">Bids</div>
+            <div className="text-muted-foreground mb-1">{language === "ru" ? "Покупка" : "Bids"}</div>
             <div className="space-y-1">
               {selectedBook.bids.slice(0, 5).map((lvl, idx) => (
                 <div key={`b-${idx}`} className="flex justify-between">
@@ -266,11 +268,11 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
                   <span>{lvl.quantity.toFixed(2)}</span>
                 </div>
               ))}
-              {selectedBook.bids.length === 0 ? <div className="text-muted-foreground">No bids</div> : null}
+              {selectedBook.bids.length === 0 ? <div className="text-muted-foreground">{language === "ru" ? "Нет заявок" : "No bids"}</div> : null}
             </div>
           </div>
           <div>
-            <div className="text-muted-foreground mb-1">Asks</div>
+            <div className="text-muted-foreground mb-1">{language === "ru" ? "Продажа" : "Asks"}</div>
             <div className="space-y-1">
               {selectedBook.asks.slice(0, 5).map((lvl, idx) => (
                 <div key={`a-${idx}`} className="flex justify-between">
@@ -278,14 +280,14 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
                   <span>{lvl.quantity.toFixed(2)}</span>
                 </div>
               ))}
-              {selectedBook.asks.length === 0 ? <div className="text-muted-foreground">No asks</div> : null}
+              {selectedBook.asks.length === 0 ? <div className="text-muted-foreground">{language === "ru" ? "Нет заявок" : "No asks"}</div> : null}
             </div>
           </div>
         </div>
       </div>
 
       <div className="mt-5 pt-4 border-t border-border/50">
-        <h4 className="text-xs font-semibold text-muted-foreground mb-2">My Open Orders</h4>
+        <h4 className="text-xs font-semibold text-muted-foreground mb-2">{language === "ru" ? "Мои открытые ордера" : "My Open Orders"}</h4>
         <div className="space-y-2 max-h-52 overflow-auto pr-1">
           {myOpenOrders.map((o) => (
             <div key={o.id} className="rounded-md bg-secondary/60 px-2 py-2 text-xs">
@@ -298,7 +300,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
                   onClick={() => cancelMutation.mutate(o.id)}
                   disabled={cancelMutation.isPending}
                 >
-                  Cancel
+                  {language === "ru" ? "Отмена" : "Cancel"}
                 </button>
               </div>
               <div className="text-muted-foreground mt-1">
@@ -306,9 +308,9 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
               </div>
             </div>
           ))}
-          {!user ? <div className="text-xs text-muted-foreground">Login to view your orders</div> : null}
+          {!user ? <div className="text-xs text-muted-foreground">{language === "ru" ? "Войдите, чтобы увидеть ордера" : "Login to view your orders"}</div> : null}
           {user && !myOrdersQuery.isLoading && myOpenOrders.length === 0 ? (
-            <div className="text-xs text-muted-foreground">No open orders</div>
+            <div className="text-xs text-muted-foreground">{language === "ru" ? "Нет открытых ордеров" : "No open orders"}</div>
           ) : null}
         </div>
       </div>

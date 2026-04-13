@@ -42,6 +42,7 @@ import type {
 } from "@/lib/portfolio";
 import { formatDateToLocaleDateString, formatDateToLocaleString, parseDate } from "@/lib/date";
 import { executeMarketTrade, getTradeQuote } from "@/api/trading";
+import { useI18n } from "@/i18n/I18nContext";
 
 type ChartPoint = {
   time: string;
@@ -51,6 +52,7 @@ type ChartPoint = {
 export default function Portfolio() {
   const queryClient = useQueryClient();
   const { request, user } = useAuth();
+  const { language, locale } = useI18n();
 
   const [tradesPage, setTradesPage] = useState(1);
   const tradesLimit = 10;
@@ -124,31 +126,41 @@ export default function Portfolio() {
   const portfolioErrorMessage = isPortfolioError
     ? typeof (portfolioError as { message?: unknown }).message === "string"
       ? (portfolioError as { message?: unknown }).message
-      : "Failed to load portfolio"
+      : language === "ru"
+        ? "Не удалось загрузить портфель"
+        : "Failed to load portfolio"
     : null;
 
   const positionsErrorMessage = isPositionsError
     ? typeof (positionsError as { message?: unknown }).message === "string"
       ? (positionsError as { message?: unknown }).message
-      : "Failed to load positions"
+      : language === "ru"
+        ? "Не удалось загрузить позиции"
+        : "Failed to load positions"
     : null;
 
   const pnlErrorMessage = isPnlError
     ? typeof (pnlError as { message?: unknown }).message === "string"
       ? (pnlError as { message?: unknown }).message
-      : "Failed to load PnL"
+      : language === "ru"
+        ? "Не удалось загрузить PnL"
+        : "Failed to load PnL"
     : null;
 
   const balanceErrorMessage = isBalanceError
     ? typeof (balanceError as { message?: unknown }).message === "string"
       ? (balanceError as { message?: unknown }).message
-      : "Failed to load balance history"
+      : language === "ru"
+        ? "Не удалось загрузить историю баланса"
+        : "Failed to load balance history"
     : null;
 
   const tradesErrorMessage = isTradesError
     ? typeof (tradesError as { message?: unknown }).message === "string"
       ? (tradesError as { message?: unknown }).message
-      : "Failed to load trades"
+      : language === "ru"
+        ? "Не удалось загрузить сделки"
+        : "Failed to load trades"
     : null;
 
   const totalBalance = portfolio?.balance.total ?? 0;
@@ -207,7 +219,7 @@ export default function Portfolio() {
     onSuccess: async (result) => {
       if (!result) return;
       toast.success(
-        `Position closed: ${result.sharesTransacted.toFixed(4)} shares at ${Math.round(
+        `${language === "ru" ? "Позиция закрыта:" : "Position closed:"} ${result.sharesTransacted.toFixed(4)} ${language === "ru" ? "акций" : "shares"} ${language === "ru" ? "по" : "at"} ${Math.round(
           result.averagePrice * 100,
         )}c`,
       );
@@ -220,7 +232,7 @@ export default function Portfolio() {
     },
     onError: (err) => {
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;
-      toast.error(typeof maybeMessage === "string" ? maybeMessage : "Failed to close position");
+      toast.error(typeof maybeMessage === "string" ? maybeMessage : language === "ru" ? "Не удалось закрыть позицию" : "Failed to close position");
     },
   });
 
@@ -231,7 +243,7 @@ export default function Portfolio() {
       .map((tx, idx) => {
         const d = parseDate(tx.createdAt);
         return {
-          time: d ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "TBD",
+          time: d ? d.toLocaleDateString(locale, { month: "short", day: "numeric" }) : language === "ru" ? "Н/Д" : "TBD",
           value: tx.balanceAfter,
           ts: d ? d.getTime() : idx, // fallback keeps chart usable even if date parsing fails
         };
@@ -245,24 +257,24 @@ export default function Portfolio() {
   return (
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold mb-6">Portfolio</h1>
+        <h1 className="text-2xl font-bold mb-6">{language === "ru" ? "Портфель" : "Portfolio"}</h1>
 
         {/* Balance cards */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <div className="text-xs text-muted-foreground mb-1">Available Balance</div>
+            <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Доступный баланс" : "Available Balance"}</div>
             <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${availableBalance.toLocaleString()}`}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <div className="text-xs text-muted-foreground mb-1">Reserved Balance</div>
+            <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Зарезервированный баланс" : "Reserved Balance"}</div>
             <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${reservedBalance.toLocaleString()}`}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <div className="text-xs text-muted-foreground mb-1">Total Balance</div>
+            <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
             <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${totalBalance.toLocaleString()}`}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <div className="text-xs text-muted-foreground mb-1">Total P&L</div>
+            <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий P&L" : "Total P&L"}</div>
             <div className="flex items-center gap-1.5">
               <span className={`text-2xl font-bold ${isPnlPositive ? "text-success" : "text-danger"}`}>
                 {isPortfolioLoading ? "…" : `${isPnlPositive ? "+" : "-"}$${Math.abs(totalPnl).toLocaleString()}`}
@@ -285,19 +297,19 @@ export default function Portfolio() {
 
         {/* Open positions */}
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
-          <div className="text-xs text-muted-foreground mb-1">Open Positions</div>
+          <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Открытые позиции" : "Open Positions"}</div>
           <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : portfolio?.positions.open ?? 0}</div>
         </div>
 
         {/* Performance chart */}
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
-          <h2 className="text-sm font-semibold mb-3">Performance</h2>
+          <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Динамика" : "Performance"}</h2>
           {isBalanceLoading ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+            <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
           ) : balanceErrorMessage ? (
             <div className="text-sm text-destructive py-4 text-center">{balanceErrorMessage}</div>
           ) : chartData.length === 0 ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">No data</div>
+            <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Нет данных" : "No data"}</div>
           ) : (
             <ResponsiveContainer width="100%" height={220}>
               <AreaChart data={chartData}>
@@ -328,7 +340,7 @@ export default function Portfolio() {
                     fontSize: "12px",
                   }}
                   labelStyle={{ color: "hsl(215, 12%, 50%)" }}
-                  formatter={(v: number) => [`$${v.toFixed(0)}`, "Value"]}
+                  formatter={(v: number) => [`$${v.toFixed(0)}`, language === "ru" ? "Значение" : "Value"]}
                 />
                 <Area
                   type="monotone"
@@ -345,10 +357,10 @@ export default function Portfolio() {
 
         {/* Positions */}
         <div className="rounded-xl bg-card border border-border/50 p-4">
-          <h2 className="text-sm font-semibold mb-3">Open Positions</h2>
+          <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Открытые позиции" : "Open Positions"}</h2>
           <div className="space-y-2">
             {isPortfolioLoading || isPositionsLoading ? (
-              <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+              <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
             ) : portfolioErrorMessage || positionsErrorMessage ? (
               <div className="text-sm text-destructive py-4 text-center">{portfolioErrorMessage ?? positionsErrorMessage}</div>
             ) : (
@@ -367,7 +379,7 @@ export default function Portfolio() {
                         {pos.side}
                       </span>
                       <span>
-                        {pos.shares} shares @ {Math.round(pos.avgPrice01 * 100)}¢
+                        {pos.shares} {language === "ru" ? "акций" : "shares"} @ {Math.round(pos.avgPrice01 * 100)}¢
                       </span>
                     </div>
                   </div>
@@ -390,7 +402,7 @@ export default function Portfolio() {
                       className="text-[11px] mt-1 text-muted-foreground hover:text-foreground"
                       onClick={() => setClosingPositionId(pos.id)}
                     >
-                      Close at market
+                      {language === "ru" ? "Закрыть по рынку" : "Close at market"}
                     </button>
                   </div>
                 </motion.div>
@@ -401,34 +413,34 @@ export default function Portfolio() {
 
         {/* PnL summary */}
         <div className="rounded-xl bg-card border border-border/50 p-4 mt-6 mb-6">
-          <h2 className="text-sm font-semibold mb-3">PnL Summary</h2>
+          <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Сводка PnL" : "PnL Summary"}</h2>
           {isPnlLoading ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+            <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
           ) : pnlErrorMessage ? (
             <div className="text-sm text-destructive py-4 text-center">{pnlErrorMessage}</div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div className="rounded-xl bg-secondary/30 border border-border/50 p-4">
-                <div className="text-xs text-muted-foreground mb-2">Trading</div>
+                <div className="text-xs text-muted-foreground mb-2">{language === "ru" ? "Торговля" : "Trading"}</div>
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Trades</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Сделки" : "Trades"}</span>
                     <span className="font-medium">{pnlSummary?.trading.tradeCount ?? 0}</span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Total traded</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Проторговано" : "Total traded"}</span>
                     <span className="font-medium">
                       ${pnlSummary?.trading.totalTraded?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Fees</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Комиссии" : "Fees"}</span>
                     <span className="font-medium">
                       ${pnlSummary?.trading.totalFees?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Avg trade size</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Средний размер сделки" : "Avg trade size"}</span>
                     <span className="font-medium">
                       ${pnlSummary?.trading.avgTradeSize?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
                     </span>
@@ -436,10 +448,10 @@ export default function Portfolio() {
                 </div>
               </div>
               <div className="rounded-xl bg-secondary/30 border border-border/50 p-4">
-                <div className="text-xs text-muted-foreground mb-2">PnL (Realized)</div>
+                <div className="text-xs text-muted-foreground mb-2">{language === "ru" ? "PnL (реализованный)" : "PnL (Realized)"}</div>
                 <div className="space-y-1 text-sm">
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Realized from trades</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Реализовано со сделок" : "Realized from trades"}</span>
                     <span
                       className={`font-medium ${pnlSummary?.pnl.realizedFromTrades >= 0 ? "text-success" : "text-danger"}`}
                     >
@@ -450,13 +462,13 @@ export default function Portfolio() {
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Resolution payouts</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Выплаты по резолюции" : "Resolution payouts"}</span>
                     <span className="font-medium">
                       ${pnlSummary?.pnl.resolutionPayouts?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3 pt-1 border-t border-border/30">
-                    <span className="text-muted-foreground">Total realized</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Итого реализовано" : "Total realized"}</span>
                     <span
                       className={`font-medium ${pnlSummary?.pnl.totalRealized >= 0 ? "text-success" : "text-danger"}`}
                     >
@@ -474,9 +486,9 @@ export default function Portfolio() {
 
         {/* Trades */}
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
-          <h2 className="text-sm font-semibold mb-3">Trade History</h2>
+          <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "История сделок" : "Trade History"}</h2>
           {isTradesLoading ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+            <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
           ) : tradesErrorMessage ? (
             <div className="text-sm text-destructive py-4 text-center">{tradesErrorMessage}</div>
           ) : (
@@ -484,12 +496,12 @@ export default function Portfolio() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Market</TableHead>
-                    <TableHead>Side</TableHead>
-                    <TableHead className="text-right">Price</TableHead>
+                    <TableHead>{language === "ru" ? "Дата" : "Date"}</TableHead>
+                    <TableHead>{language === "ru" ? "Рынок" : "Market"}</TableHead>
+                    <TableHead>{language === "ru" ? "Сторона" : "Side"}</TableHead>
+                    <TableHead className="text-right">{language === "ru" ? "Цена" : "Price"}</TableHead>
                     <TableHead className="text-right">Qty</TableHead>
-                    <TableHead className="text-right">Total</TableHead>
+                    <TableHead className="text-right">{language === "ru" ? "Итого" : "Total"}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -510,7 +522,7 @@ export default function Portfolio() {
                   {tradeHistory?.data?.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center text-muted-foreground py-6">
-                        No trades yet
+                        {language === "ru" ? "Сделок пока нет" : "No trades yet"}
                       </TableCell>
                     </TableRow>
                   ) : null}
@@ -523,17 +535,17 @@ export default function Portfolio() {
                   disabled={tradesPage <= 1}
                   onClick={() => setTradesPage((p) => Math.max(1, p - 1))}
                 >
-                  Previous
+                  {language === "ru" ? "Назад" : "Previous"}
                 </button>
                 <div className="text-xs text-muted-foreground">
-                  Page {tradeHistory?.page ?? tradesPage} / {tradeHistory?.totalPages ?? 1}
+                  {language === "ru" ? "Страница" : "Page"} {tradeHistory?.page ?? tradesPage} / {tradeHistory?.totalPages ?? 1}
                 </div>
                 <button
                   className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
                   disabled={tradesPage >= (tradeHistory?.totalPages ?? 1)}
                   onClick={() => setTradesPage((p) => p + 1)}
                 >
-                  Next
+                  {language === "ru" ? "Далее" : "Next"}
                 </button>
               </div>
             </>
@@ -542,19 +554,19 @@ export default function Portfolio() {
 
         {/* Balance history (latest txs) */}
         <div className="rounded-xl bg-card border border-border/50 p-4">
-          <h2 className="text-sm font-semibold mb-3">Balance Transactions</h2>
+          <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Транзакции баланса" : "Balance Transactions"}</h2>
           {isBalanceLoading ? (
-            <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+            <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
           ) : balanceErrorMessage ? (
             <div className="text-sm text-destructive py-4 text-center">{balanceErrorMessage}</div>
           ) : (
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>Date</TableHead>
-                  <TableHead>Description</TableHead>
-                  <TableHead className="text-right">Amount</TableHead>
-                  <TableHead className="text-right">Balance</TableHead>
+                  <TableHead>{language === "ru" ? "Дата" : "Date"}</TableHead>
+                  <TableHead>{language === "ru" ? "Описание" : "Description"}</TableHead>
+                  <TableHead className="text-right">{language === "ru" ? "Сумма" : "Amount"}</TableHead>
+                  <TableHead className="text-right">{language === "ru" ? "Баланс" : "Balance"}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -575,7 +587,7 @@ export default function Portfolio() {
                 {recentBalances.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="text-center text-muted-foreground py-6">
-                      No balance history
+                      {language === "ru" ? "Истории баланса нет" : "No balance history"}
                     </TableCell>
                   </TableRow>
                 ) : null}
@@ -588,9 +600,11 @@ export default function Portfolio() {
       <Dialog open={!!closingPosition} onOpenChange={(open) => !open && setClosingPositionId(null)}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Close Position at Market</DialogTitle>
+            <DialogTitle>{language === "ru" ? "Закрыть позицию по рынку" : "Close Position at Market"}</DialogTitle>
             <DialogDescription>
-              Sell your full {closingPosition?.side.toUpperCase()} position immediately into available bids.
+              {language === "ru"
+                ? `Продайте всю позицию ${closingPosition?.side.toUpperCase()} сразу по доступным заявкам.`
+                : `Sell your full ${closingPosition?.side.toUpperCase()} position immediately into available bids.`}
             </DialogDescription>
           </DialogHeader>
 
@@ -599,12 +613,12 @@ export default function Portfolio() {
               <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
                 <div className="font-medium">{closingPosition.marketTitle}</div>
                 <div className="text-xs text-muted-foreground mt-1">
-                  {closingPosition.side.toUpperCase()} | {closingPosition.quantity.toFixed(4)} shares
+                  {closingPosition.side.toUpperCase()} | {closingPosition.quantity.toFixed(4)} {language === "ru" ? "акций" : "shares"}
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">Max slippage (%)</label>
+                <label className="text-xs text-muted-foreground mb-1 block">{language === "ru" ? "Макс. проскальзывание (%)" : "Max slippage (%)"}</label>
                 <input
                   type="number"
                   min={0}
@@ -622,35 +636,37 @@ export default function Portfolio() {
 
               <div className="rounded-md border border-border/60 p-3 space-y-1.5 text-xs">
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Estimated proceeds</span>
+                  <span className="text-muted-foreground">{language === "ru" ? "Оценочная выручка" : "Estimated proceeds"}</span>
                   <span className="font-medium">
                     {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.totalCost.toFixed(2)}` : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Estimated avg price</span>
+                  <span className="text-muted-foreground">{language === "ru" ? "Оценочная ср. цена" : "Estimated avg price"}</span>
                   <span className="font-medium">
                     {marketCloseQuoteQuery.data ? `${Math.round(marketCloseQuoteQuery.data.averagePrice * 100)}c` : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Fees</span>
+                  <span className="text-muted-foreground">{language === "ru" ? "Комиссии" : "Fees"}</span>
                   <span className="font-medium">
                     {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.fee.toFixed(2)}` : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-muted-foreground">Price impact</span>
+                  <span className="text-muted-foreground">{language === "ru" ? "Влияние на цену" : "Price impact"}</span>
                   <span className="font-medium">
                     {marketCloseQuoteQuery.data ? `${marketCloseQuoteQuery.data.priceImpact.toFixed(2)}%` : "—"}
                   </span>
                 </div>
                 {marketCloseQuoteQuery.isLoading ? (
-                  <div className="text-muted-foreground pt-1">Fetching live quote...</div>
+                  <div className="text-muted-foreground pt-1">{language === "ru" ? "Получаем актуальную котировку..." : "Fetching live quote..."}</div>
                 ) : null}
                 {marketCloseQuoteQuery.isError ? (
                   <div className="text-destructive pt-1">
-                    Failed to get quote. There may be no immediate liquidity for this close.
+                    {language === "ru"
+                      ? "Не удалось получить котировку. Для закрытия может не хватать мгновенной ликвидности."
+                      : "Failed to get quote. There may be no immediate liquidity for this close."}
                   </div>
                 ) : null}
               </div>
@@ -659,14 +675,14 @@ export default function Portfolio() {
 
           <DialogFooter>
             <Button variant="outline" onClick={() => setClosingPositionId(null)} disabled={marketCloseMutation.isPending}>
-              Cancel
+              {language === "ru" ? "Отмена" : "Cancel"}
             </Button>
             <Button
               variant="destructive"
               disabled={marketCloseMutation.isPending || !marketCloseQuoteQuery.data || marketCloseQuoteQuery.isError}
               onClick={() => marketCloseMutation.mutate()}
             >
-              {marketCloseMutation.isPending ? "Closing..." : "Close position now"}
+              {marketCloseMutation.isPending ? (language === "ru" ? "Закрываем..." : "Closing...") : language === "ru" ? "Закрыть позицию" : "Close position now"}
             </Button>
           </DialogFooter>
         </DialogContent>

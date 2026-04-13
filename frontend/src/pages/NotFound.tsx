@@ -1,8 +1,10 @@
 import { useLocation } from "react-router-dom";
 import { useEffect } from "react";
+import { useI18n } from "@/i18n/I18nContext";
 
 const NotFound = () => {
   const location = useLocation();
+  const { language } = useI18n();
 
   useEffect(() => {
     console.error("404 Error: User attempted to access non-existent route:", location.pathname);
@@ -12,9 +14,11 @@ const NotFound = () => {
     <div className="flex min-h-screen items-center justify-center bg-muted">
       <div className="text-center">
         <h1 className="mb-4 text-4xl font-bold">404</h1>
-        <p className="mb-4 text-xl text-muted-foreground">Oops! Page not found</p>
+        <p className="mb-4 text-xl text-muted-foreground">
+          {language === "ru" ? "Упс! Страница не найдена" : "Oops! Page not found"}
+        </p>
         <a href="/" className="text-primary underline hover:text-primary/90">
-          Return to Home
+          {language === "ru" ? "Вернуться на главную" : "Return to Home"}
         </a>
       </div>
     </div>

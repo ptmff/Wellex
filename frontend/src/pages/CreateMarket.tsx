@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { listMarkets, type BackendMarket, type CreateMarketInput, createMarket } from "@/api/markets";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
+import { useI18n } from "@/i18n/I18nContext";
 
 export default function CreateMarket() {
   const [title, setTitle] = useState("");
@@ -19,6 +20,7 @@ export default function CreateMarket() {
 
   const { request } = useAuth();
   const navigate = useNavigate();
+  const { language } = useI18n();
 
   const categoriesQuery = useQuery({
     queryKey: ["markets-create-categories"],
@@ -65,27 +67,31 @@ export default function CreateMarket() {
     // We set time to the end of the day in the local timezone to reduce accidental "past" values.
     const closesAtDate = new Date(`${end}T23:59:59`);
     if (Number.isNaN(closesAtDate.getTime())) {
-      toast.error("Invalid end date");
+      toast.error(language === "ru" ? "Некорректная дата окончания" : "Invalid end date");
       return;
     }
 
     // backend requires closesAt > now + 1 hour
     if (closesAtDate.getTime() <= Date.now() + 60 * 60 * 1000) {
-      toast.error("Market must close at least 1 hour from now");
+      toast.error(language === "ru" ? "Рынок должен закрываться минимум через 1 час" : "Market must close at least 1 hour from now");
       return;
     }
     const closesAt = closesAtDate.toISOString();
 
     if (t.length < 10 || t.length > 500) {
-      toast.error("Question must be between 10 and 500 characters");
+      toast.error(language === "ru" ? "Вопрос должен быть от 10 до 500 символов" : "Question must be between 10 and 500 characters");
       return;
     }
     if (d.length < 20 || d.length > 5000) {
-      toast.error("Description must be between 20 and 5000 characters");
+      toast.error(language === "ru" ? "Описание должно быть от 20 до 5000 символов" : "Description must be between 20 and 5000 characters");
       return;
     }
     if (r.length < 20 || r.length > 2000) {
-      toast.error("Resolution criteria must be between 20 and 2000 characters");
+      toast.error(
+        language === "ru"
+          ? "Критерии резолюции должны быть от 20 до 2000 символов"
+          : "Resolution criteria must be between 20 and 2000 characters",
+      );
       return;
     }
 
@@ -102,7 +108,7 @@ export default function CreateMarket() {
       const created = await createMarket(request, payload);
       navigate(`/market/${created.id}`);
     } catch (err) {
-      const message = typeof (err as any)?.message === "string" ? (err as any).message : "Failed to create market";
+      const message = typeof (err as any)?.message === "string" ? (err as any).message : language === "ru" ? "Не удалось создать рынок" : "Failed to create market";
       toast.error(message);
     } finally {
       setSubmitting(false);
@@ -112,9 +118,9 @@ export default function CreateMarket() {
   return (
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto">
-        <h1 className="text-2xl font-bold mb-1">Create Market</h1>
+        <h1 className="text-2xl font-bold mb-1">{language === "ru" ? "Создать рынок" : "Create Market"}</h1>
         <p className="text-sm text-muted-foreground mb-6">
-          Create a new prediction market for the community to trade on
+          {language === "ru" ? "Создайте новый рынок прогнозов для сообщества." : "Create a new prediction market for the community to trade on"}
         </p>
 
         {!preview ? (
@@ -123,23 +129,23 @@ export default function CreateMarket() {
             <div>
               <label className="text-xs font-medium text-muted-foreground mb-1.5 block">
                 <HelpCircle className="h-3 w-3 inline mr-1" />
-                Question
+                {language === "ru" ? "Вопрос" : "Question"}
               </label>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="Will [event] happen by [date]?"
+                placeholder={language === "ru" ? "Произойдет ли [событие] до [даты]?" : "Will [event] happen by [date]?"}
                 className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all"
               />
             </div>
 
             {/* Description */}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Description</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{language === "ru" ? "Описание" : "Description"}</label>
               <textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="Provide details about resolution criteria..."
+                placeholder={language === "ru" ? "Опишите детали критериев резолюции..." : "Provide details about resolution criteria..."}
                 rows={4}
                 className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all resize-none"
               />
@@ -149,14 +155,14 @@ export default function CreateMarket() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <Tag className="h-3 w-3" /> Category
+                  <Tag className="h-3 w-3" /> {language === "ru" ? "Категория" : "Category"}
                 </label>
                 <select
                   value={categoryId}
                   onChange={(e) => setCategoryId(e.target.value)}
                   className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all appearance-none"
                 >
-                  <option value="">Select category (optional)</option>
+                  <option value="">{language === "ru" ? "Выберите категорию (необязательно)" : "Select category (optional)"}</option>
                   {categories.map((c) => (
                     <option key={c.id} value={c.id}>
                       {c.name}
@@ -166,7 +172,7 @@ export default function CreateMarket() {
               </div>
               <div>
                 <label className="text-xs font-medium text-muted-foreground mb-1.5 flex items-center gap-1">
-                  <Calendar className="h-3 w-3" /> End Date
+                  <Calendar className="h-3 w-3" /> {language === "ru" ? "Дата окончания" : "End Date"}
                 </label>
                 <input
                   type="date"
@@ -179,11 +185,11 @@ export default function CreateMarket() {
 
             {/* Resolution Criteria */}
             <div>
-              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">Resolution Criteria</label>
+              <label className="text-xs font-medium text-muted-foreground mb-1.5 block">{language === "ru" ? "Критерии резолюции" : "Resolution Criteria"}</label>
               <textarea
                 value={resolutionCriteria}
                 onChange={(e) => setResolutionCriteria(e.target.value)}
-                placeholder="What exact rule resolves YES?"
+                placeholder={language === "ru" ? "Какое точное правило определяет YES?" : "What exact rule resolves YES?"}
                 rows={3}
                 className="w-full bg-card border border-border/50 rounded-xl px-4 py-3 text-sm text-foreground placeholder:text-muted-foreground outline-none focus:ring-1 focus:ring-primary/50 transition-all resize-none"
               />
@@ -195,7 +201,7 @@ export default function CreateMarket() {
                 onClick={() => title && setPreview(true)}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-foreground text-sm font-medium hover:bg-accent/80 transition-colors"
               >
-                <Eye className="h-4 w-4" /> Preview
+                <Eye className="h-4 w-4" /> {language === "ru" ? "Предпросмотр" : "Preview"}
               </button>
               <motion.button
                 whileTap={{ scale: 0.98 }}
@@ -207,7 +213,7 @@ export default function CreateMarket() {
                   if (title && description && resolutionCriteria && endDate) setPreview(true);
                 }}
               >
-                Create Market
+                {language === "ru" ? "Создать рынок" : "Create Market"}
               </motion.button>
             </div>
           </div>
@@ -217,21 +223,21 @@ export default function CreateMarket() {
             <div className="rounded-xl bg-card border border-border/50 p-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-                  {selectedCategoryName || "Uncategorized"}
+                  {selectedCategoryName || (language === "ru" ? "Без категории" : "Uncategorized")}
                 </span>
               </div>
-              <h2 className="text-xl font-bold mb-2">{title || "Untitled Market"}</h2>
+              <h2 className="text-xl font-bold mb-2">{title || (language === "ru" ? "Рынок без названия" : "Untitled Market")}</h2>
               {description && (
                 <p className="text-sm text-muted-foreground mb-3">{description}</p>
               )}
               {resolutionCriteria && (
                 <p className="text-sm text-muted-foreground mb-3">
-                  <span className="font-medium text-foreground">Resolution:</span> {resolutionCriteria}
+                  <span className="font-medium text-foreground">{language === "ru" ? "Резолюция:" : "Resolution:"}</span> {resolutionCriteria}
                 </p>
               )}
               <div className="flex items-center gap-4 text-xs text-muted-foreground">
-                <span>Ends: {endDate || "TBD"}</span>
-                <span>Market starts empty</span>
+                <span>{language === "ru" ? "Окончание:" : "Ends:"} {endDate || (language === "ru" ? "будет определено" : "TBD")}</span>
+                <span>{language === "ru" ? "Рынок стартует пустым" : "Market starts empty"}</span>
               </div>
             </div>
 
@@ -240,7 +246,7 @@ export default function CreateMarket() {
                 onClick={() => setPreview(false)}
                 className="px-5 py-2.5 rounded-xl bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
               >
-                Edit
+                {language === "ru" ? "Редактировать" : "Edit"}
               </button>
               <motion.button
                 whileTap={{ scale: 0.98 }}
@@ -248,7 +254,7 @@ export default function CreateMarket() {
                 onClick={submit}
                 disabled={submitting}
               >
-                {submitting ? "Creating..." : "Submit Market"}
+                {submitting ? (language === "ru" ? "Создание..." : "Creating...") : language === "ru" ? "Опубликовать рынок" : "Submit Market"}
               </motion.button>
             </div>
           </div>

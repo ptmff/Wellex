@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/auth/AuthContext";
+import { useI18n } from "@/i18n/I18nContext";
 
 const RegisterSchema = z.object({
   email: z.string().email(),
@@ -19,6 +20,7 @@ const RegisterSchema = z.object({
 export default function Register() {
   const navigate = useNavigate();
   const { register, isLoading } = useAuth();
+  const { language } = useI18n();
 
   const [email, setEmail] = useState("");
   const [username, setUsername] = useState("");
@@ -30,7 +32,7 @@ export default function Register() {
   const schemaIssues = useMemo(() => {
     const parsed = RegisterSchema.safeParse({ email, username, password, displayName: displayName || undefined });
     if (parsed.success) return null;
-    return parsed.error.issues[0]?.message ?? "Invalid input";
+    return parsed.error.issues[0]?.message ?? (language === "ru" ? "Некорректные данные" : "Invalid input");
   }, [displayName, email, password, username]);
 
   const onSubmit = async (e: FormEvent) => {
@@ -45,7 +47,7 @@ export default function Register() {
     });
 
     if (!parsed.success) {
-      setFieldError(parsed.error.issues[0]?.message ?? "Invalid input");
+      setFieldError(parsed.error.issues[0]?.message ?? (language === "ru" ? "Некорректные данные" : "Invalid input"));
       return;
     }
 
@@ -55,7 +57,8 @@ export default function Register() {
       navigate("/portfolio");
     } catch (err) {
       const maybe = err as { message?: unknown };
-      const message = typeof maybe?.message === "string" ? maybe.message : "Registration failed";
+      const message =
+        typeof maybe?.message === "string" ? maybe.message : language === "ru" ? "Не удалось зарегистрироваться" : "Registration failed";
       toast.error(message);
       setFieldError(message);
     } finally {
@@ -66,8 +69,8 @@ export default function Register() {
   return (
     <AppLayout>
       <div className="max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-2">Create account</h1>
-        <p className="text-sm text-muted-foreground mb-6">Register to start trading.</p>
+        <h1 className="text-2xl font-bold mb-2">{language === "ru" ? "Создать аккаунт" : "Create account"}</h1>
+        <p className="text-sm text-muted-foreground mb-6">{language === "ru" ? "Зарегистрируйтесь, чтобы начать торговать." : "Register to start trading."}</p>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -83,34 +86,34 @@ export default function Register() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="username">Username</Label>
+            <Label htmlFor="username">{language === "ru" ? "Имя пользователя" : "Username"}</Label>
             <Input
               id="username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="username"
+              placeholder={language === "ru" ? "логин" : "username"}
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="displayName">Display name (optional)</Label>
+            <Label htmlFor="displayName">{language === "ru" ? "Отображаемое имя (необязательно)" : "Display name (optional)"}</Label>
             <Input
               id="displayName"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="What should other users see?"
+              placeholder={language === "ru" ? "Как вас будут видеть другие?" : "What should other users see?"}
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">{language === "ru" ? "Пароль" : "Password"}</Label>
             <Input
               id="password"
               type="password"
               autoComplete="new-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              placeholder={language === "ru" ? "Минимум 8 символов" : "At least 8 characters"}
             />
           </div>
 
@@ -118,13 +121,13 @@ export default function Register() {
           {!fieldError && schemaIssues && <div className="text-sm text-muted-foreground">{schemaIssues}</div>}
 
           <Button type="submit" className="w-full" disabled={submitting || isLoading || !email || !username || !password}>
-            {submitting ? "Creating..." : "Create account"}
+            {submitting ? (language === "ru" ? "Создаем..." : "Creating...") : language === "ru" ? "Создать аккаунт" : "Create account"}
           </Button>
 
           <div className="text-sm text-muted-foreground text-center">
-            Already have an account?{" "}
+            {language === "ru" ? "Уже есть аккаунт?" : "Already have an account?"}{" "}
             <Link className="text-primary hover:underline" to="/login">
-              Log in
+              {language === "ru" ? "Войти" : "Log in"}
             </Link>
           </div>
         </form>

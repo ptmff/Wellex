@@ -8,9 +8,11 @@ import { useAuth } from "@/auth/AuthContext";
 import type { BackendMarket } from "@/api/markets";
 import { getMarketPriceLine } from "@/api/markets";
 import { formatDateToLocaleDateString, parseDate } from "@/lib/date";
+import { useI18n } from "@/i18n/I18nContext";
 
 export function MarketCard({ market, index = 0 }: { market: BackendMarket; index?: number }) {
   const { request } = useAuth();
+  const { language } = useI18n();
   const probabilityPct = Math.round(market.prices.yes * 100);
   const probColor = probabilityPct >= 50 ? "text-success" : "text-danger";
   const isNew = (() => {
@@ -47,15 +49,15 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1.5">
               <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-                {market.category?.name ?? "Uncategorized"}
+                {market.category?.name ?? (language === "ru" ? "Без категории" : "Uncategorized")}
               </span>
               {market.isFeatured && (
                 <span className="text-[10px] font-medium text-primary flex items-center gap-0.5">
-                  <TrendingUp className="h-3 w-3" /> Hot
+                  <TrendingUp className="h-3 w-3" /> {language === "ru" ? "Горячее" : "Hot"}
                 </span>
               )}
               {isNew && (
-                <span className="text-[10px] font-medium text-warning">New</span>
+                <span className="text-[10px] font-medium text-warning">{language === "ru" ? "Новое" : "New"}</span>
               )}
             </div>
             <h3 className="text-sm font-semibold leading-snug text-foreground group-hover:text-primary transition-colors line-clamp-2">
@@ -66,7 +68,7 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
             <div className={`text-2xl font-bold tabular-nums ${probColor}`}>
               {probabilityPct}%
             </div>
-            <div className="text-[10px] text-muted-foreground">chance</div>
+            <div className="text-[10px] text-muted-foreground">{language === "ru" ? "шанс" : "chance"}</div>
           </div>
         </div>
 
@@ -98,5 +100,6 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
 }
 
 function useMemoClosesLabel(closesAt: string) {
-  return formatDateToLocaleDateString(closesAt, "en-US", { month: "short", day: "numeric" });
+  const { locale } = useI18n();
+  return formatDateToLocaleDateString(closesAt, locale, { month: "short", day: "numeric" });
 }

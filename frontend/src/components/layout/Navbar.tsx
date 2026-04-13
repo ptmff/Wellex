@@ -3,18 +3,19 @@ import { Link, useLocation } from "react-router-dom";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/auth/AuthContext";
-
-const navLinks = [
-  { label: "Markets", path: "/" },
-  { label: "Portfolio", path: "/portfolio" },
-  { label: "Create", path: "/create" },
-];
+import { useI18n } from "@/i18n/I18nContext";
 
 export function Navbar() {
   const location = useLocation();
   const [searchOpen, setSearchOpen] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const { user, logout } = useAuth();
+  const { language, setLanguage, t } = useI18n();
+  const navLinks = [
+    { label: t("nav.markets"), path: "/" },
+    { label: t("nav.portfolio"), path: "/portfolio" },
+    { label: t("nav.create"), path: "/create" },
+  ];
 
   return (
     <header className="sticky top-0 z-50 glass border-b border-border/30">
@@ -65,7 +66,7 @@ export function Navbar() {
               >
                 <input
                   autoFocus
-                  placeholder="Search markets..."
+                  placeholder={t("nav.searchMarkets")}
                   className="w-full bg-secondary text-sm text-foreground placeholder:text-muted-foreground rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-primary/50"
                 />
               </motion.div>
@@ -84,12 +85,33 @@ export function Navbar() {
             <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-primary" />
           </button>
 
+          <div className="hidden sm:flex items-center rounded-lg bg-secondary p-0.5">
+            <button
+              type="button"
+              onClick={() => setLanguage("ru")}
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                language === "ru" ? "bg-card text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {t("lang.ru")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setLanguage("en")}
+              className={`px-2 py-1 text-xs rounded-md transition-colors ${
+                language === "en" ? "bg-card text-foreground" : "text-muted-foreground"
+              }`}
+            >
+              {t("lang.en")}
+            </button>
+          </div>
+
           <Link
             to={user ? "/profile" : "/login"}
             className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg bg-accent hover:bg-accent/80 transition-colors text-sm font-medium"
           >
             {user ? <Wallet className="h-4 w-4" /> : <User className="h-4 w-4" />}
-            <span>{user ? user.displayName ?? user.username : "Log in"}</span>
+            <span>{user ? user.displayName ?? user.username : t("nav.login")}</span>
           </Link>
 
           {user ? (
@@ -102,7 +124,7 @@ export function Navbar() {
               type="button"
             >
               <LogOut className="h-4 w-4" />
-              <span>Log out</span>
+              <span>{t("nav.logout")}</span>
             </button>
           ) : null}
 
@@ -125,6 +147,26 @@ export function Navbar() {
             className="md:hidden overflow-hidden border-t border-border/30"
           >
             <nav className="container py-3 flex flex-col gap-1">
+              <div className="flex gap-2 px-3 py-2">
+                <button
+                  type="button"
+                  onClick={() => setLanguage("ru")}
+                  className={`px-2 py-1 text-xs rounded-md ${
+                    language === "ru" ? "bg-accent text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {t("lang.ru")}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLanguage("en")}
+                  className={`px-2 py-1 text-xs rounded-md ${
+                    language === "en" ? "bg-accent text-foreground" : "text-muted-foreground"
+                  }`}
+                >
+                  {t("lang.en")}
+                </button>
+              </div>
               {navLinks.map((link) => (
                 <Link
                   key={link.path}

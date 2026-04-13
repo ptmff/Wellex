@@ -5,6 +5,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
+import { I18nProvider } from "@/i18n/I18nContext";
 import Index from "./pages/Index";
 import MarketDetail from "./pages/MarketDetail";
 import Portfolio from "./pages/Portfolio";
@@ -18,48 +19,50 @@ const queryClient = new QueryClient();
 
 const App = () => (
   <QueryClientProvider client={queryClient}>
-    <AuthProvider>
-      <TooltipProvider>
-        <Toaster />
-        <Sonner />
-        <BrowserRouter>
-          <Routes>
-            <Route path="/" element={<Index />} />
-            <Route path="/market/:id" element={<MarketDetail />} />
+    <I18nProvider>
+      <AuthProvider>
+        <TooltipProvider>
+          <Toaster />
+          <Sonner />
+          <BrowserRouter>
+            <Routes>
+              <Route path="/" element={<Index />} />
+              <Route path="/market/:id" element={<MarketDetail />} />
 
-            <Route
-              path="/portfolio"
-              element={
-                <ProtectedRoute>
-                  <Portfolio />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/profile"
-              element={
-                <ProtectedRoute>
-                  <Profile />
-                </ProtectedRoute>
-              }
-            />
-            <Route
-              path="/create"
-              element={
-                <ProtectedRoute>
-                  <CreateMarket />
-                </ProtectedRoute>
-              }
-            />
+              <Route
+                path="/portfolio"
+                element={
+                  <ProtectedRoute>
+                    <Portfolio />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <Profile />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/create"
+                element={
+                  <ProtectedRoute>
+                    <CreateMarket />
+                  </ProtectedRoute>
+                }
+              />
 
-            <Route path="/login" element={<Login />} />
-            <Route path="/register" element={<Register />} />
+              <Route path="/login" element={<Login />} />
+              <Route path="/register" element={<Register />} />
 
-            <Route path="*" element={<NotFound />} />
-          </Routes>
-        </BrowserRouter>
-      </TooltipProvider>
-    </AuthProvider>
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </BrowserRouter>
+        </TooltipProvider>
+      </AuthProvider>
+    </I18nProvider>
   </QueryClientProvider>
 );
 

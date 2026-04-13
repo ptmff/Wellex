@@ -6,9 +6,11 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/auth/AuthContext";
 import type { PaginatedResult, PortfolioSummaryResponse, PortfolioTrade } from "@/lib/portfolio";
 import { formatRelativeTime } from "@/lib/date";
+import { useI18n } from "@/i18n/I18nContext";
 
 export default function Profile() {
   const { user, request, logout } = useAuth();
+  const { language } = useI18n();
 
   const { data: portfolio, isLoading: isPortfolioLoading, isError, error } = useQuery({
     queryKey: ["portfolio"],
@@ -32,14 +34,18 @@ export default function Profile() {
   const tradesErrorMessage = isTradesError
     ? typeof (tradesError as { message?: unknown }).message === "string"
       ? (tradesError as { message?: unknown }).message
-      : "Failed to load trades"
+      : language === "ru"
+        ? "Не удалось загрузить сделки"
+        : "Failed to load trades"
     : null;
 
   const errorMessage =
     isError && error
       ? typeof (error as { message?: unknown }).message === "string"
         ? (error as { message?: unknown }).message
-        : "Failed to load portfolio"
+        : language === "ru"
+          ? "Не удалось загрузить портфель"
+          : "Failed to load portfolio"
       : null;
 
   const stats = useMemo(() => {
@@ -63,7 +69,7 @@ export default function Profile() {
   return (
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold mb-6">Profile</h1>
+        <h1 className="text-2xl font-bold mb-6">{language === "ru" ? "Профиль" : "Profile"}</h1>
 
         {/* User card */}
         <div className="rounded-xl bg-card border border-border/50 p-5 mb-6">
@@ -72,9 +78,9 @@ export default function Profile() {
               <User className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">{user?.displayName ?? user?.username ?? "User"}</h2>
+              <h2 className="text-lg font-semibold">{user?.displayName ?? user?.username ?? (language === "ru" ? "Пользователь" : "User")}</h2>
               <p className="text-xs text-muted-foreground">
-                @{user?.username ?? "unknown"} • {user?.role ?? "user"}
+                @{user?.username ?? (language === "ru" ? "неизвестно" : "unknown")} • {user?.role ?? "user"}
               </p>
             </div>
           </div>
@@ -82,15 +88,15 @@ export default function Profile() {
           <div className="grid grid-cols-3 gap-3 mt-5">
             <div className="text-center p-3 rounded-lg bg-secondary/50">
               <div className="text-lg font-bold">${stats.totalBalance.toLocaleString()}</div>
-              <div className="text-[11px] text-muted-foreground">Total Balance</div>
+              <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
             </div>
             <div className="text-center p-3 rounded-lg bg-secondary/50">
               <div className={`text-lg font-bold ${totalPnlClass}`}>{totalPnlText}</div>
-              <div className="text-[11px] text-muted-foreground">Total P&amp;L</div>
+              <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий P&L" : "Total P&L"}</div>
             </div>
             <div className="text-center p-3 rounded-lg bg-secondary/50">
               <div className="text-lg font-bold">{stats.openPositions}</div>
-              <div className="text-[11px] text-muted-foreground">Open Positions</div>
+              <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Открытые позиции" : "Open Positions"}</div>
             </div>
           </div>
         </div>
@@ -98,12 +104,14 @@ export default function Profile() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {/* Activity */}
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <h2 className="text-sm font-semibold mb-3">Recent Activity</h2>
+            <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Последняя активность" : "Recent Activity"}</h2>
             <div className="space-y-2">
               {isTradesLoading ? (
-                <div className="text-sm text-muted-foreground py-4 text-center">Loading...</div>
+                <div className="text-sm text-muted-foreground py-4 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
               ) : isTradesError ? (
-                <div className="text-sm text-destructive py-4 text-center">{tradesErrorMessage ?? "Failed to load"}</div>
+                <div className="text-sm text-destructive py-4 text-center">
+                  {tradesErrorMessage ?? (language === "ru" ? "Не удалось загрузить" : "Failed to load")}
+                </div>
               ) : (
                 (tradeHistory?.data ?? []).map((t) => (
                   <motion.div
@@ -115,11 +123,11 @@ export default function Profile() {
                   >
                     <div>
                       <div className="text-sm font-medium">
-                        {t.side === "yes" ? "YES" : "NO"} trade
+                        {t.side === "yes" ? "YES" : "NO"} {language === "ru" ? "сделка" : "trade"}
                       </div>
                       <div className="text-xs text-muted-foreground">{t.marketTitle}</div>
                       <div className="text-xs text-muted-foreground">
-                        {Math.round(t.price * 100)}¢ @ {t.quantity} shares
+                        {Math.round(t.price * 100)}¢ @ {t.quantity} {language === "ru" ? "акций" : "shares"}
                       </div>
                     </div>
                     <div className="text-right">
@@ -136,13 +144,29 @@ export default function Profile() {
 
           {/* Settings */}
           <div className="rounded-xl bg-card border border-border/50 p-4">
-            <h2 className="text-sm font-semibold mb-3">Settings</h2>
+            <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Настройки" : "Settings"}</h2>
             <div className="space-y-1">
               {[
-                { icon: Bell, label: "Notifications", desc: "Manage alerts" },
-                { icon: Shield, label: "Security", desc: "2FA and passwords" },
-                { icon: ExternalLink, label: "Connected Apps", desc: "Manage integrations" },
-                { icon: Settings, label: "Preferences", desc: "Language, display" },
+                {
+                  icon: Bell,
+                  label: language === "ru" ? "Уведомления" : "Notifications",
+                  desc: language === "ru" ? "Управление оповещениями" : "Manage alerts",
+                },
+                {
+                  icon: Shield,
+                  label: language === "ru" ? "Безопасность" : "Security",
+                  desc: language === "ru" ? "2FA и пароли" : "2FA and passwords",
+                },
+                {
+                  icon: ExternalLink,
+                  label: language === "ru" ? "Подключенные приложения" : "Connected Apps",
+                  desc: language === "ru" ? "Управление интеграциями" : "Manage integrations",
+                },
+                {
+                  icon: Settings,
+                  label: language === "ru" ? "Предпочтения" : "Preferences",
+                  desc: language === "ru" ? "Язык, интерфейс" : "Language, display",
+                },
               ].map((item) => (
                 <button
                   key={item.label}
@@ -161,11 +185,12 @@ export default function Profile() {
                 className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-destructive/10 transition-colors text-danger"
               >
                 <LogOut className="h-4 w-4" />
-                <span className="text-sm font-medium">Log Out</span>
+                <span className="text-sm font-medium">{language === "ru" ? "Выйти" : "Log Out"}</span>
               </button>
             </div>
           </div>
         </div>
+        {errorMessage ? <div className="mt-4 text-sm text-destructive">{errorMessage}</div> : null}
       </motion.div>
     </AppLayout>
   );

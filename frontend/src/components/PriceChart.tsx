@@ -7,23 +7,25 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
+import { useI18n } from "@/i18n/I18nContext";
 
 interface PriceChartProps {
   data: { time: string; yes: number; no: number }[];
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+const CustomTooltip = ({ active, payload, label, language }: any) => {
   if (!active || !payload?.length) return null;
   return (
     <div className="glass rounded-lg px-3 py-2 text-xs">
       <p className="text-muted-foreground mb-1">{label}</p>
-      <p className="text-success font-medium">YES: {payload[0]?.value}¢</p>
-      <p className="text-danger font-medium">NO: {payload[1]?.value}¢</p>
+      <p className="text-success font-medium">{language === "ru" ? "ДА" : "YES"}: {payload[0]?.value}¢</p>
+      <p className="text-danger font-medium">{language === "ru" ? "НЕТ" : "NO"}: {payload[1]?.value}¢</p>
     </div>
   );
 };
 
 export function PriceChart({ data }: PriceChartProps) {
+  const { language } = useI18n();
   return (
     <ResponsiveContainer width="100%" height={280}>
       <AreaChart data={data}>
@@ -51,7 +53,7 @@ export function PriceChart({ data }: PriceChartProps) {
           tickLine={false}
           tickFormatter={(v) => `${v}¢`}
         />
-        <Tooltip content={<CustomTooltip />} />
+        <Tooltip content={<CustomTooltip language={language} />} />
         <Area
           type="monotone"
           dataKey="yes"

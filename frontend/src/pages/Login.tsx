@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/auth/AuthContext";
+import { useI18n } from "@/i18n/I18nContext";
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -17,6 +18,7 @@ const LoginSchema = z.object({
 export default function Login() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuth();
+  const { language } = useI18n();
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -26,7 +28,7 @@ export default function Login() {
   const schemaIssues = useMemo(() => {
     const parsed = LoginSchema.safeParse({ email, password });
     if (parsed.success) return null;
-    return parsed.error.issues[0]?.message ?? "Invalid input";
+    return parsed.error.issues[0]?.message ?? (language === "ru" ? "Некорректные данные" : "Invalid input");
   }, [email, password]);
 
   const onSubmit = async (e: FormEvent) => {
@@ -35,7 +37,7 @@ export default function Login() {
 
     const parsed = LoginSchema.safeParse({ email, password });
     if (!parsed.success) {
-      setFieldError(parsed.error.issues[0]?.message ?? "Invalid input");
+      setFieldError(parsed.error.issues[0]?.message ?? (language === "ru" ? "Некорректные данные" : "Invalid input"));
       return;
     }
 
@@ -45,7 +47,7 @@ export default function Login() {
       navigate("/portfolio");
     } catch (err) {
       const maybe = err as { message?: unknown };
-      const message = typeof maybe?.message === "string" ? maybe.message : "Login failed";
+      const message = typeof maybe?.message === "string" ? maybe.message : language === "ru" ? "Не удалось войти" : "Login failed";
       toast.error(message);
       setFieldError(message);
     } finally {
@@ -56,8 +58,10 @@ export default function Login() {
   return (
     <AppLayout>
       <div className="max-w-md mx-auto">
-        <h1 className="text-2xl font-bold mb-2">Log in</h1>
-        <p className="text-sm text-muted-foreground mb-6">Access your portfolio and trade history.</p>
+        <h1 className="text-2xl font-bold mb-2">{language === "ru" ? "Вход" : "Log in"}</h1>
+        <p className="text-sm text-muted-foreground mb-6">
+          {language === "ru" ? "Доступ к портфелю и истории сделок." : "Access your portfolio and trade history."}
+        </p>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
@@ -73,7 +77,7 @@ export default function Login() {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
+            <Label htmlFor="password">{language === "ru" ? "Пароль" : "Password"}</Label>
             <Input
               id="password"
               type="password"
@@ -88,13 +92,13 @@ export default function Login() {
           {!fieldError && schemaIssues && <div className="text-sm text-muted-foreground">{schemaIssues}</div>}
 
           <Button type="submit" className="w-full" disabled={submitting || isLoading || !email || !password}>
-            {submitting ? "Signing in..." : "Sign in"}
+            {submitting ? (language === "ru" ? "Входим..." : "Signing in...") : language === "ru" ? "Войти" : "Sign in"}
           </Button>
 
           <div className="text-sm text-muted-foreground text-center">
-            No account?{" "}
+            {language === "ru" ? "Нет аккаунта?" : "No account?"}{" "}
             <Link className="text-primary hover:underline" to="/register">
-              Create one
+              {language === "ru" ? "Создать" : "Create one"}
             </Link>
           </div>
         </form>

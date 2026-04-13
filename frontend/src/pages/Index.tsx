@@ -7,10 +7,12 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
 import { listMarkets, type BackendMarket, type ListMarketsInput } from "@/api/markets";
 import { parseDate } from "@/lib/date";
+import { useI18n } from "@/i18n/I18nContext";
 
 type Filter = "all" | "trending" | "new" | "ending";
 
 export default function MarketsPage() {
+  const { t, language } = useI18n();
   const [filter, setFilter] = useState<Filter>("all");
   const [categoryKey, setCategoryKey] = useState<string | "all">("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
@@ -18,10 +20,10 @@ export default function MarketsPage() {
   const [page, setPage] = useState(1);
 
   const filters: { key: Filter; label: string; icon: any }[] = [
-    { key: "all", label: "All", icon: Sparkles },
-    { key: "trending", label: "Trending", icon: TrendingUp },
-    { key: "new", label: "New", icon: Sparkles },
-    { key: "ending", label: "Ending Soon", icon: Clock },
+    { key: "all", label: t("index.filter.all"), icon: Sparkles },
+    { key: "trending", label: t("index.filter.trending"), icon: TrendingUp },
+    { key: "new", label: t("index.filter.new"), icon: Sparkles },
+    { key: "ending", label: t("index.filter.ending"), icon: Clock },
   ];
 
   const { request } = useAuth();
@@ -29,7 +31,7 @@ export default function MarketsPage() {
   const listLimit = filter === "new" || filter === "ending" ? 30 : 12;
 
   // Формируем categories из текущей страницы рынков.
-  const [categories, setCategories] = useState<Array<{ key: string; name: string; id?: string }>>([{ key: "all", name: "All" }]);
+  const [categories, setCategories] = useState<Array<{ key: string; name: string; id?: string }>>([{ key: "all", name: t("index.filter.all") }]);
 
   const listParams = useMemo<ListMarketsInput>(() => {
     return {
@@ -69,8 +71,8 @@ export default function MarketsPage() {
       if (!map.has(key)) map.set(key, { key, name: cat.name, id: cat.id });
     }
     const arr = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    setCategories([{ key: "all", name: "All" }, ...arr]);
-  }, [marketsQuery.data]);
+    setCategories([{ key: "all", name: t("index.filter.all") }, ...arr]);
+  }, [marketsQuery.data, t]);
 
   const filtered = useMemo(() => {
     const data = marketsQuery.data?.data ?? [];
@@ -105,19 +107,19 @@ export default function MarketsPage() {
       {/* Hero */}
       <div className="mb-8">
         <h1 className="text-2xl sm:text-3xl font-bold mb-1">
-          Prediction <span className="text-gradient">Markets</span>
+          {t("index.title")}
         </h1>
         <p className="text-sm text-muted-foreground">
-          Trade on the outcome of real-world events
+          {t("index.subtitle")}
         </p>
       </div>
 
       {/* Stats bar */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
-          { label: "Markets", value: "248" },
-          { label: "Volume 24h", value: "$12.4M" },
-          { label: "Traders", value: "18.2K" },
+          { label: t("nav.markets"), value: "248" },
+          { label: language === "ru" ? "Объем 24ч" : "24h Volume", value: "$12.4M" },
+          { label: language === "ru" ? "Трейдеры" : "Traders", value: "18.2K" },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl bg-card border border-border/50 p-3 text-center">
             <div className="text-lg font-bold text-foreground">{stat.value}</div>
@@ -153,7 +155,7 @@ export default function MarketsPage() {
               setPage(1);
               setSearch(e.target.value);
             }}
-            placeholder="Search..."
+            placeholder={t("index.search")}
             className="w-40 hidden sm:block bg-secondary text-xs text-foreground placeholder:text-muted-foreground rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-primary/50 transition-all"
           />
           <button
@@ -210,12 +212,12 @@ export default function MarketsPage() {
           }
         >
           {marketsQuery.isLoading || marketsQuery.isFetching ? (
-            <div className="col-span-full text-center py-12 text-muted-foreground">Loading...</div>
+            <div className="col-span-full text-center py-12 text-muted-foreground">{t("index.loading")}</div>
           ) : marketsQuery.error ? (
             <div className="col-span-full text-center py-12 text-destructive">
               {typeof (marketsQuery.error as any)?.message === "string"
                 ? (marketsQuery.error as any).message
-                : "Failed to load markets"}
+                : t("index.failedToLoad", "Не удалось загрузить рынки")}
             </div>
           ) : filtered.map((market, i) => (
             <MarketCard key={market.id} market={market as BackendMarket} index={i} />
@@ -224,7 +226,7 @@ export default function MarketsPage() {
       </AnimatePresence>
       {!(marketsQuery.isLoading || marketsQuery.isFetching) && filtered.length === 0 && (
         <div className="text-center py-16 text-muted-foreground">
-          <p className="text-sm">No markets found</p>
+          <p className="text-sm">{t("index.noMarkets")}</p>
         </div>
       )}
 
@@ -235,7 +237,7 @@ export default function MarketsPage() {
             className="px-5 py-2.5 rounded-xl bg-secondary text-foreground text-sm font-medium hover:bg-secondary/80 transition-colors"
             disabled={marketsQuery.isLoading || marketsQuery.isFetching}
           >
-            {marketsQuery.isFetching ? "Loading..." : "Load more"}
+            {marketsQuery.isFetching ? t("index.loading") : t("index.loadMore")}
           </button>
         )}
       </div>

@@ -11,12 +11,13 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { getMarket, getMarketPriceLine, getMarketStats, updateMarketStatus, type BackendMarket, type MarketStats, type PriceLinePoint } from "@/api/markets";
 import { formatDateToLocaleDateString, formatRelativeTime } from "@/lib/date";
+import { useI18n } from "@/i18n/I18nContext";
 
 type RangeKey = "1D" | "1W" | "1M" | "All";
 
-function priceLineToChartData(points: PriceLinePoint[]) {
+function priceLineToChartData(points: PriceLinePoint[], locale: string) {
   return points.map((p) => ({
-    time: new Date(p.time * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+    time: new Date(p.time * 1000).toLocaleDateString(locale, { month: "short", day: "numeric" }),
     yes: Math.round(p.yesPrice * 100),
     no: Math.round(p.noPrice * 100),
   }));
@@ -26,6 +27,7 @@ export default function MarketDetail() {
   const { id } = useParams();
   const marketId = id ?? "";
   const { request, user } = useAuth();
+  const { language, locale } = useI18n();
   const [range, setRange] = useState<RangeKey>("1M");
   const queryClient = useQueryClient();
 
@@ -65,7 +67,7 @@ export default function MarketDetail() {
         to,
         points: 200,
       });
-      return priceLineToChartData(points);
+      return priceLineToChartData(points, locale);
     },
     enabled: !!marketId,
     keepPreviousData: true,
@@ -98,7 +100,12 @@ export default function MarketDetail() {
       queryClient.invalidateQueries({ queryKey: ["market-stats", marketId] });
     },
     onError: (err) => {
-      const message = typeof (err as any)?.message === "string" ? (err as any).message : "Failed to update market status";
+      const message =
+        typeof (err as any)?.message === "string"
+          ? (err as any).message
+          : language === "ru"
+            ? "Не удалось обновить статус рынка"
+            : "Failed to update market status";
       toast.error(message);
     },
   });
@@ -106,7 +113,7 @@ export default function MarketDetail() {
   if (marketQuery.isLoading) {
     return (
       <AppLayout>
-        <div className="text-center py-20 text-muted-foreground">Loading...</div>
+        <div className="text-center py-20 text-muted-foreground">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
       </AppLayout>
     );
   }
@@ -114,7 +121,7 @@ export default function MarketDetail() {
   if (!marketQuery.data) {
     return (
       <AppLayout>
-        <div className="text-center py-20 text-muted-foreground">Market not found</div>
+        <div className="text-center py-20 text-muted-foreground">{language === "ru" ? "Рынок не найден" : "Market not found"}</div>
       </AppLayout>
     );
   }
@@ -127,7 +134,7 @@ export default function MarketDetail() {
           to="/"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
         >
-          <ArrowLeft className="h-4 w-4" /> Back to markets
+          <ArrowLeft className="h-4 w-4" /> {language === "ru" ? "Назад к рынкам" : "Back to markets"}
         </Link>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -137,11 +144,11 @@ export default function MarketDetail() {
             <div className="rounded-xl bg-card border border-border/50 p-5">
               <div className="flex items-center gap-2 mb-2">
                 <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-secondary px-2 py-0.5 rounded-md">
-                  {market.category?.name ?? "Uncategorized"}
+                  {market.category?.name ?? (language === "ru" ? "Без категории" : "Uncategorized")}
                 </span>
                 {market.isFeatured && (
                   <span className="text-[10px] font-medium text-primary flex items-center gap-0.5">
-                    <TrendingUp className="h-3 w-3" /> Trending
+                    <TrendingUp className="h-3 w-3" /> {language === "ru" ? "В тренде" : "Trending"}
                   </span>
                 )}
               </div>
@@ -151,7 +158,7 @@ export default function MarketDetail() {
               <div className="flex items-center gap-6 flex-wrap">
                 <div>
                   <span className={`text-3xl font-bold ${probColor}`}>{probabilityPct}%</span>
-                  <span className="text-xs text-muted-foreground ml-1.5">chance</span>
+                  <span className="text-xs text-muted-foreground ml-1.5">{language === "ru" ? "шанс" : "chance"}</span>
                 </div>
 
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
@@ -166,7 +173,7 @@ export default function MarketDetail() {
                   </span>
                   <span className="flex items-center gap-1">
                     <Clock className="h-3.5 w-3.5" />{" "}
-                    {formatDateToLocaleDateString(market.closesAt, "en-US", {
+                    {formatDateToLocaleDateString(market.closesAt, locale, {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
@@ -183,7 +190,7 @@ export default function MarketDetail() {
             {/* Chart */}
             <div className="rounded-xl bg-card border border-border/50 p-4">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="text-sm font-semibold">Price History</h2>
+                <h2 className="text-sm font-semibold">{language === "ru" ? "История цены" : "Price History"}</h2>
                 <div className="flex gap-1">
                   {(["1D", "1W", "1M", "All"] as const).map((t) => (
                     <button
@@ -199,7 +206,9 @@ export default function MarketDetail() {
                 </div>
               </div>
               {chartQuery.isLoading ? (
-                <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">Loading chart...</div>
+                  <div className="h-[280px] flex items-center justify-center text-muted-foreground text-sm">
+                    {language === "ru" ? "Загрузка графика..." : "Loading chart..."}
+                  </div>
               ) : (
                 <PriceChart data={chartQuery.data ?? []} />
               )}
@@ -207,10 +216,10 @@ export default function MarketDetail() {
 
             {/* Activity */}
             <div className="rounded-xl bg-card border border-border/50 p-4">
-              <h2 className="text-sm font-semibold mb-3">Recent Activity</h2>
+              <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Последняя активность" : "Recent Activity"}</h2>
               <div className="space-y-2">
                 {statsQuery.isLoading ? (
-                  <div className="text-sm text-muted-foreground py-6 text-center">Loading...</div>
+                  <div className="text-sm text-muted-foreground py-6 text-center">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
                 ) : stats?.recentTrades?.length ? (
                   stats.recentTrades.map((trade, i) => {
                     const side = String(trade.side).toLowerCase() === "yes" ? "YES" : "NO";
@@ -230,11 +239,11 @@ export default function MarketDetail() {
                           </div>
                           <div>
                             <div className="flex items-center gap-1.5 text-xs">
-                              <span className="text-muted-foreground">bought</span>
+                              <span className="text-muted-foreground">{language === "ru" ? "куплено" : "bought"}</span>
                               <span className={side === "YES" ? "text-success font-medium" : "text-danger font-medium"}>
                                 {side}
                               </span>
-                              <span className="text-muted-foreground">at {priceCents}¢</span>
+                              <span className="text-muted-foreground">{language === "ru" ? "по" : "at"} {priceCents}¢</span>
                             </div>
                             <div className="text-[10px] text-muted-foreground mt-0.5">
                               {formatRelativeTime(trade.executedAt)}
@@ -248,7 +257,7 @@ export default function MarketDetail() {
                     );
                   })
                 ) : (
-                  <div className="text-sm text-muted-foreground py-6 text-center">No trades yet</div>
+                  <div className="text-sm text-muted-foreground py-6 text-center">{language === "ru" ? "Сделок пока нет" : "No trades yet"}</div>
                 )}
               </div>
             </div>
@@ -260,10 +269,10 @@ export default function MarketDetail() {
 
             {canModerate && nextModerationStatus && (
               <div className="rounded-xl bg-card border border-border/50 p-4">
-                <h3 className="text-sm font-semibold mb-3">Market Status</h3>
+                <h3 className="text-sm font-semibold mb-3">{language === "ru" ? "Статус рынка" : "Market Status"}</h3>
                 <div className="space-y-2.5 text-xs">
                   <div className="flex justify-between">
-                    <span className="text-muted-foreground">Current</span>
+                    <span className="text-muted-foreground">{language === "ru" ? "Текущий" : "Current"}</span>
                     <span className="font-medium">{market.status}</span>
                   </div>
                   <div className="flex gap-2">
@@ -273,7 +282,7 @@ export default function MarketDetail() {
                         onClick={() => statusMutation.mutate("paused")}
                         disabled={statusMutation.isPending}
                       >
-                        Pause
+                        {language === "ru" ? "Пауза" : "Pause"}
                       </button>
                     ) : null}
                     {market.status === "paused" || market.status === "pending" ? (
@@ -282,7 +291,7 @@ export default function MarketDetail() {
                         onClick={() => statusMutation.mutate("active")}
                         disabled={statusMutation.isPending}
                       >
-                        Activate
+                        {language === "ru" ? "Активировать" : "Activate"}
                       </button>
                     ) : null}
                   </div>
@@ -292,21 +301,21 @@ export default function MarketDetail() {
 
             {/* Market Stats */}
             <div className="rounded-xl bg-card border border-border/50 p-4">
-              <h3 className="text-sm font-semibold mb-3">Market Info</h3>
+              <h3 className="text-sm font-semibold mb-3">{language === "ru" ? "Информация о рынке" : "Market Info"}</h3>
               <div className="space-y-2.5 text-xs">
                 {[
-                  { label: "Volume (24h)", value: formatVolume(stats?.volume24h ?? market.stats.volume24h) },
-                  { label: "Liquidity", value: formatVolume(stats?.liquidityTotal ?? market.stats.liquidityTotal) },
-                  { label: "Traders", value: stats?.uniqueTraders?.toLocaleString() ?? "—" },
+                  { label: language === "ru" ? "Объем (24ч)" : "Volume (24h)", value: formatVolume(stats?.volume24h ?? market.stats.volume24h) },
+                  { label: language === "ru" ? "Ликвидность" : "Liquidity", value: formatVolume(stats?.liquidityTotal ?? market.stats.liquidityTotal) },
+                  { label: language === "ru" ? "Трейдеры" : "Traders", value: stats?.uniqueTraders?.toLocaleString() ?? "—" },
                   {
-                    label: "End Date",
-                    value: formatDateToLocaleDateString(market.closesAt, "en-US", {
+                    label: language === "ru" ? "Дата окончания" : "End Date",
+                    value: formatDateToLocaleDateString(market.closesAt, locale, {
                       month: "short",
                       day: "numeric",
                       year: "numeric",
                     }),
                   },
-                  { label: "Resolution", value: market.resolutionCriteria ? market.resolutionCriteria : "Oracle" },
+                  { label: language === "ru" ? "Резолюция" : "Resolution", value: market.resolutionCriteria ? market.resolutionCriteria : "Oracle" },
                 ].map((item) => (
                   <div key={item.label} className="flex justify-between">
                     <span className="text-muted-foreground">{item.label}</span>

@@ -1,15 +1,16 @@
 import { Home, BarChart3, PlusCircle, User, Briefcase } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
-
-const items = [
-  { icon: Home, label: "Markets", path: "/" },
-  { icon: Briefcase, label: "Portfolio", path: "/portfolio" },
-  { icon: PlusCircle, label: "Create", path: "/create" },
-  { icon: User, label: "Profile", path: "/profile" },
-];
+import { useI18n } from "@/i18n/I18nContext";
 
 export function BottomNav() {
   const location = useLocation();
+  const { t } = useI18n();
+  const items = [
+    { icon: Home, label: t("nav.markets"), path: "/" },
+    { icon: Briefcase, label: t("nav.portfolio"), path: "/portfolio" },
+    { icon: PlusCircle, label: t("nav.create"), path: "/create" },
+    { icon: User, label: t("nav.profile"), path: "/profile" },
+  ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 glass border-t border-border/30">
