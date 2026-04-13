@@ -500,7 +500,7 @@ export default function Portfolio() {
                     <TableHead>{language === "ru" ? "Рынок" : "Market"}</TableHead>
                     <TableHead>{language === "ru" ? "Сторона" : "Side"}</TableHead>
                     <TableHead className="text-right">{language === "ru" ? "Цена" : "Price"}</TableHead>
-                    <TableHead className="text-right">Qty</TableHead>
+                    <TableHead className="text-right">{language === "ru" ? "Кол-во" : "Qty"}</TableHead>
                     <TableHead className="text-right">{language === "ru" ? "Итого" : "Total"}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -508,7 +508,7 @@ export default function Portfolio() {
                   {(tradeHistory?.data ?? []).map((t) => (
                     <TableRow key={t.id}>
                       <TableCell>
-                        {formatDateToLocaleString(t.executedAt, undefined, { dateStyle: "medium", timeStyle: "short" })}
+                        {formatDateToLocaleString(t.executedAt, locale, { dateStyle: "medium", timeStyle: "short" })}
                       </TableCell>
                       <TableCell className="max-w-[220px]">{t.marketTitle}</TableCell>
                       <TableCell>{t.side === "yes" ? "YES" : "NO"}</TableCell>
@@ -573,7 +573,7 @@ export default function Portfolio() {
                 {recentBalances.map((tx) => (
                   <TableRow key={tx.id}>
                     <TableCell>
-                      {formatDateToLocaleDateString(tx.createdAt, undefined, { dateStyle: "medium" })}
+                      {formatDateToLocaleDateString(tx.createdAt, locale, { dateStyle: "medium" })}
                     </TableCell>
                     <TableCell className="max-w-[240px]">{tx.description}</TableCell>
                     <TableCell className="text-right">

@@ -74,7 +74,7 @@ export default function Register() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="email">{language === "ru" ? "Почта" : "Email"}</Label>
             <Input
               id="email"
               type="email"

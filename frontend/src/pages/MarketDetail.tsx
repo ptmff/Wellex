@@ -200,7 +200,7 @@ export default function MarketDetail() {
                         t === range ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
-                      {t}
+                      {t === "All" && language === "ru" ? "Все" : t}
                     </button>
                   ))}
                 </div>

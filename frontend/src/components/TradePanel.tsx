@@ -62,7 +62,11 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
     },
     onSuccess: async (order) => {
       if (!order) return;
-      toast.success(`Order placed: ${action.toUpperCase()} ${side} @ ${Math.round(limitPrice * 100)}¢`);
+      toast.success(
+        language === "ru"
+          ? `Ордер размещен: ${action.toUpperCase()} ${side} @ ${Math.round(limitPrice * 100)}¢`
+          : `Order placed: ${action.toUpperCase()} ${side} @ ${Math.round(limitPrice * 100)}¢`,
+      );
 
       // Market-derived UI: refresh chart/stats and recent trades.
       await queryClient.invalidateQueries({ queryKey: ["market", marketId] });
@@ -143,7 +147,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
                 : "text-muted-foreground hover:text-foreground"
             }`}
           >
-            {a}
+            {a === "buy" ? (language === "ru" ? "покупка" : "buy") : language === "ru" ? "продажа" : "sell"}
           </button>
         ))}
       </div>
@@ -227,7 +231,7 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
           <span className="text-foreground font-medium">{parsedQuantity !== undefined ? parsedQuantity.toFixed(4) : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
-          <span>Notional</span>
+          <span>{language === "ru" ? "Номинал" : "Notional"}</span>
           <span className="text-success font-medium">{parsedPrice !== undefined && parsedQuantity !== undefined ? `$${(parsedPrice * parsedQuantity).toFixed(2)}` : "—"}</span>
         </div>
         <div className="flex justify-between text-muted-foreground">
@@ -304,7 +308,9 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
                 </button>
               </div>
               <div className="text-muted-foreground mt-1">
-                Qty {o.quantity.toFixed(4)} | Filled {o.filledQuantity.toFixed(4)} | Remaining {o.remainingQuantity.toFixed(4)}
+                {language === "ru" ? "Кол-во" : "Qty"} {o.quantity.toFixed(4)} |{" "}
+                {language === "ru" ? "Исполнено" : "Filled"} {o.filledQuantity.toFixed(4)} |{" "}
+                {language === "ru" ? "Осталось" : "Remaining"} {o.remainingQuantity.toFixed(4)}
               </div>
             </div>
           ))}
