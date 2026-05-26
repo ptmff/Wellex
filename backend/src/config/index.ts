@@ -32,7 +32,7 @@ const configSchema = z.object({
 
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
-  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(100),
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(10000000),
 
   // Trading
   MIN_TRADE_AMOUNT: z.coerce.number().default(1),

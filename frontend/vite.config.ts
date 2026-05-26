@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => ({
         ws: true,
       },
     },
-    allowedHosts: ["tenesha-unporcelainized-unpathetically.ngrok-free.dev"],
+    allowedHosts: ["coastal-tatyana-furthermore.ngrok-free.dev"],
   },
   plugins: [react(), mode === "development" && componentTagger()].filter(Boolean),
   resolve: {
