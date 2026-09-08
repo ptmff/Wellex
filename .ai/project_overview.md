@@ -44,6 +44,7 @@
 
 ```
 Wellex/
+├── LOCAL.md           — локальный запуск (Docker + Vite)
 ├── frontend/          — Vite SPA (порт 8080, proxy /api и /ws → :3000)
 ├── backend/           — Express API + WS (порт 3000)
 │   ├── src/modules/   — auth, users, markets, trading, orders, portfolio, analytics, activity, admin, economy, ingest, bots
