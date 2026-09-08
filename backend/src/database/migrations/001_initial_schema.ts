@@ -1,8 +1,18 @@
 import { db } from '../connection';
 import { logger } from '../../common/logger';
+import type { Knex } from 'knex';
 
 export async function runMigrations(): Promise<void> {
   logger.info('Running database migrations...');
+  const createTableIfMissing = async (
+    tableName: string,
+    builder: (t: Knex.TableBuilder) => void
+  ): Promise<void> => {
+    const exists = await db.schema.hasTable(tableName);
+    if (!exists) {
+      await db.schema.createTable(tableName, builder);
+    }
+  };
 
   await db.schema.raw('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
   await db.schema.raw('CREATE EXTENSION IF NOT EXISTS "btree_gist"');
@@ -10,7 +20,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // USERS
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('users', (t) => {
+  await createTableIfMissing('users', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.string('email', 255).notNullable().unique();
     t.string('username', 50).notNullable().unique();
@@ -20,6 +30,7 @@ export async function runMigrations(): Promise<void> {
     t.string('avatar_url', 500);
     t.enum('role', ['user', 'moderator', 'admin']).notNullable().defaultTo('user');
     t.enum('status', ['active', 'suspended', 'banned']).notNullable().defaultTo('active');
+    t.boolean('is_bot').notNullable().defaultTo(false);
     t.boolean('email_verified').notNullable().defaultTo(false);
     t.string('email_verification_token', 255);
     t.timestamp('email_verified_at');
@@ -39,7 +50,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // REFRESH TOKENS
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('refresh_tokens', (t) => {
+  await createTableIfMissing('refresh_tokens', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
     t.string('token_hash', 255).notNullable().unique();
@@ -56,13 +67,13 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // BALANCES
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('balances', (t) => {
+  await createTableIfMissing('balances', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE').unique();
     t.decimal('available', 20, 8).notNullable().defaultTo(0);
     t.decimal('reserved', 20, 8).notNullable().defaultTo(0); // locked in open orders
     t.decimal('total', 20, 8).notNullable().defaultTo(0);    // available + reserved
-    t.string('currency', 10).notNullable().defaultTo('USD');
+    t.string('currency', 10).notNullable().defaultTo('WX');
     t.integer('version').notNullable().defaultTo(0); // optimistic locking
     t.timestamps(true, true);
     t.index(['user_id']);
@@ -89,11 +100,21 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // BALANCE TRANSACTIONS (audit log)
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('balance_transactions', (t) => {
+  await createTableIfMissing('balance_transactions', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
-    t.enum('type', ['deposit', 'withdrawal', 'trade_debit', 'trade_credit', 'fee', 'adjustment', 'refund'])
-      .notNullable();
+    t.enum('type', [
+      'deposit',
+      'withdrawal',
+      'trade_debit',
+      'trade_credit',
+      'fee',
+      'adjustment',
+      'refund',
+      'purchase',
+      'ad_reward',
+      'signup_bonus',
+    ]).notNullable();
     t.decimal('amount', 20, 8).notNullable();
     t.decimal('balance_before', 20, 8).notNullable();
     t.decimal('balance_after', 20, 8).notNullable();
@@ -112,7 +133,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // MARKETS
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('market_categories', (t) => {
+  await createTableIfMissing('market_categories', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.string('name', 100).notNullable().unique();
     t.string('slug', 100).notNullable().unique();
@@ -122,7 +143,7 @@ export async function runMigrations(): Promise<void> {
     t.timestamps(true, true);
   });
 
-  await db.schema.createTableIfNotExists('markets', (t) => {
+  await createTableIfMissing('markets', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('creator_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
     t.uuid('category_id').references('id').inTable('market_categories').onDelete('SET NULL');
@@ -151,6 +172,8 @@ export async function runMigrations(): Promise<void> {
     t.boolean('is_featured').notNullable().defaultTo(false);
     t.jsonb('tags').notNullable().defaultTo('[]');
     t.jsonb('metadata').notNullable().defaultTo('{}');
+    t.string('external_source', 50);
+    t.string('external_id', 100);
     t.integer('version').notNullable().defaultTo(0); // optimistic locking
     t.timestamps(true, true);
     t.index(['creator_id']);
@@ -172,7 +195,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // ORDER BOOK
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('orders', (t) => {
+  await createTableIfMissing('orders', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
@@ -205,7 +228,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // TRADES (executed transactions)
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('trades', (t) => {
+  await createTableIfMissing('trades', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
     t.uuid('buyer_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
@@ -234,7 +257,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // POSITIONS
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('positions', (t) => {
+  await createTableIfMissing('positions', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
@@ -266,7 +289,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // PRICE HISTORY (time-series)
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('price_history', (t) => {
+  await createTableIfMissing('price_history', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('CASCADE');
     t.decimal('yes_price', 10, 8).notNullable();
@@ -280,7 +303,7 @@ export async function runMigrations(): Promise<void> {
   });
 
   // OHLCV candles table (pre-aggregated for performance)
-  await db.schema.createTableIfNotExists('price_candles', (t) => {
+  await createTableIfMissing('price_candles', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('CASCADE');
     t.enum('resolution', ['1m', '5m', '15m', '1h', '4h', '1d', '1w']).notNullable();
@@ -300,7 +323,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // LIQUIDITY EVENTS
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('liquidity_events', (t) => {
+  await createTableIfMissing('liquidity_events', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
     t.uuid('user_id').references('id').inTable('users').onDelete('SET NULL');
@@ -317,7 +340,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // ACTIVITY FEED
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('activity_feed', (t) => {
+  await createTableIfMissing('activity_feed', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').references('id').inTable('users').onDelete('SET NULL');
     t.uuid('market_id').references('id').inTable('markets').onDelete('CASCADE');
@@ -339,7 +362,7 @@ export async function runMigrations(): Promise<void> {
   // ─────────────────────────────────────────────────────────────────
   // MARKET REPORTS (admin moderation)
   // ─────────────────────────────────────────────────────────────────
-  await db.schema.createTableIfNotExists('market_reports', (t) => {
+  await createTableIfMissing('market_reports', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('CASCADE');
     t.uuid('reporter_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
@@ -355,5 +378,95 @@ export async function runMigrations(): Promise<void> {
     t.index(['status']);
   });
 
+  // ─────────────────────────────────────────────────────────────────
+  // INCREMENTAL: virtual currency, bots, Polymarket ingest, economy
+  // ─────────────────────────────────────────────────────────────────
+  await db.schema.raw(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS is_bot boolean NOT NULL DEFAULT false;
+  `);
+
+  await db.schema.raw(`
+    UPDATE balances SET currency = 'WX' WHERE currency IS DISTINCT FROM 'WX';
+  `);
+  await db.schema.raw(`
+    ALTER TABLE balances ALTER COLUMN currency SET DEFAULT 'WX';
+  `);
+
+  await db.schema.raw(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS external_source varchar(50);
+  `);
+  await db.schema.raw(`
+    ALTER TABLE markets
+    ADD COLUMN IF NOT EXISTS external_id varchar(100);
+  `);
+  await db.schema.raw(`
+    CREATE UNIQUE INDEX IF NOT EXISTS markets_external_uidx
+    ON markets (external_source, external_id)
+    WHERE external_id IS NOT NULL;
+  `);
+
+  await addEnumValueIfMissing('balance_transactions_type', 'purchase');
+  await addEnumValueIfMissing('balance_transactions_type', 'ad_reward');
+  await addEnumValueIfMissing('balance_transactions_type', 'signup_bonus');
+
+  await createTableIfMissing('coin_packages', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.string('slug', 50).notNullable().unique();
+    t.string('name', 100).notNullable();
+    t.decimal('wx_amount', 20, 8).notNullable();
+    t.decimal('price_rub', 12, 2).notNullable();
+    t.boolean('is_active').notNullable().defaultTo(true);
+    t.integer('sort_order').notNullable().defaultTo(0);
+    t.timestamps(true, true);
+  });
+
+  await createTableIfMissing('coin_purchases', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('RESTRICT');
+    t.uuid('package_id').notNullable().references('id').inTable('coin_packages').onDelete('RESTRICT');
+    t.decimal('wx_amount', 20, 8).notNullable();
+    t.decimal('price_rub', 12, 2).notNullable();
+    t.string('provider', 50).notNullable().defaultTo('mock');
+    t.string('provider_ref', 255);
+    t.enum('status', ['pending', 'succeeded', 'failed']).notNullable().defaultTo('pending');
+    t.jsonb('metadata').notNullable().defaultTo('{}');
+    t.timestamp('created_at').notNullable().defaultTo(db.fn.now());
+    t.timestamp('completed_at');
+    t.index(['user_id']);
+    t.index(['status']);
+    t.index(['provider_ref']);
+  });
+
+  await createTableIfMissing('ad_rewards', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+    t.decimal('wx_amount', 20, 8).notNullable();
+    t.string('provider', 50).notNullable().defaultTo('mock');
+    t.timestamp('created_at').notNullable().defaultTo(db.fn.now());
+    t.index(['user_id', 'created_at']);
+  });
+
   logger.info('✅ Database migrations completed');
+}
+
+async function addEnumValueIfMissing(_enumName: string, value: string): Promise<void> {
+  const safeValue = value.replace(/[^a-z0-9_]/gi, '');
+  await db.raw(`
+    DO $$
+    DECLARE
+      tname text;
+    BEGIN
+      SELECT t.typname INTO tname
+      FROM pg_type t
+      JOIN pg_enum e ON t.oid = e.enumtypid
+      WHERE e.enumlabel = 'deposit'
+      GROUP BY t.typname
+      LIMIT 1;
+      IF tname IS NOT NULL THEN
+        EXECUTE format('ALTER TYPE %I ADD VALUE IF NOT EXISTS %L', tname, '${safeValue}');
+      END IF;
+    END $$;
+  `);
 }

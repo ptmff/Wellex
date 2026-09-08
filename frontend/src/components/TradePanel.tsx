@@ -5,6 +5,9 @@ import { toast } from "sonner";
 import { useAuth } from "@/auth/AuthContext";
 import { cancelOrder, getMyOrders, getOrderBook, placeOrder, type OrderAction, type OrderSide } from "@/api/orders";
 import { useI18n } from "@/i18n/I18nContext";
+import { formatWx } from "@/lib/money";
+import { Link } from "react-router-dom";
+import type { PortfolioSummaryResponse } from "@/lib/portfolio";
 
 interface TradePanelProps {
   marketId: string;
@@ -83,7 +86,16 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
       await queryClient.invalidateQueries({ queryKey: ["my-orders", marketId] });
     },
     onError: (err) => {
+      const code = (err as { code?: unknown } | undefined)?.code;
       const maybeMessage = (err as { message?: unknown } | undefined)?.message;
+      if (code === "INSUFFICIENT_BALANCE") {
+        toast.error(
+          language === "ru"
+            ? "Недостаточно WX. Докупите валюту или посмотрите рекламу."
+            : "Not enough WX. Buy more or watch an ad.",
+        );
+        return;
+      }
       const message = typeof maybeMessage === "string" ? maybeMessage : language === "ru" ? "Сделка не выполнена" : "Trade failed";
       toast.error(message);
     },
@@ -91,6 +103,13 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
 
   const quickPrices = [0.4, 0.5, 0.6, 0.7];
   const quickQty = [1, 5, 10, 25];
+
+  const portfolioQuery = useQuery({
+    queryKey: ["portfolio"],
+    queryFn: () => request<PortfolioSummaryResponse>("/portfolio", { method: "GET" }),
+    enabled: !!request && !!user,
+  });
+  const availableWx = portfolioQuery.data?.balance.available ?? 0;
 
   const orderBookQuery = useQuery({
     queryKey: ["order-book", marketId],
@@ -232,8 +251,14 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
         </div>
         <div className="flex justify-between text-muted-foreground">
           <span>{language === "ru" ? "Номинал" : "Notional"}</span>
-          <span className="text-success font-medium">{parsedPrice !== undefined && parsedQuantity !== undefined ? `$${(parsedPrice * parsedQuantity).toFixed(2)}` : "—"}</span>
+          <span className="text-success font-medium">{parsedPrice !== undefined && parsedQuantity !== undefined ? formatWx(parsedPrice * parsedQuantity) : "—"}</span>
         </div>
+        {user ? (
+          <div className="flex justify-between text-muted-foreground">
+            <span>{language === "ru" ? "Баланс" : "Balance"}</span>
+            <span className="text-foreground font-medium">{formatWx(availableWx)}</span>
+          </div>
+        ) : null}
         <div className="flex justify-between text-muted-foreground">
           <span>{language === "ru" ? "Тип" : "Rule"}</span>
           <span className="text-foreground font-medium">{language === "ru" ? "Лимитный ордер" : "Limit order"}</span>
@@ -257,8 +282,24 @@ export function TradePanel({ marketId, currentYesPrice }: TradePanelProps) {
           tradeMutation.mutate();
         }}
       >
-        {tradeMutation.isPending ? (language === "ru" ? "Отправка..." : "Submitting...") : action === "buy" ? (language === "ru" ? "Купить" : "Buy") : language === "ru" ? "Продать" : "Sell"} {side}
+        {tradeMutation.isPending
+          ? language === "ru"
+            ? "Отправка..."
+            : "Submitting..."
+          : action === "buy"
+            ? language === "ru"
+              ? "Купить"
+              : "Buy"
+            : language === "ru"
+              ? "Продать"
+              : "Sell"}{" "}
+        {side}
       </motion.button>
+      {user && availableWx <= 0 ? (
+        <Link to="/shop" className="mt-2 block text-center text-xs text-primary hover:underline">
+          {language === "ru" ? "Баланс пуст — магазин и реклама" : "Empty balance — shop or watch an ad"}
+        </Link>
+      ) : null}
 
       <div className="mt-5 pt-4 border-t border-border/50">
         <h4 className="text-xs font-semibold text-muted-foreground mb-2">{language === "ru" ? "Стакан ордеров" : "Order Book"} ({side})</h4>

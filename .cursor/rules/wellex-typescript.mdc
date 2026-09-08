@@ -1,0 +1,48 @@
+---
+description: Wellex TypeScript conventions — Express modules, React, Zod, Knex
+globs: "**/*.{ts,tsx}"
+alwaysApply: false
+---
+
+# Wellex — TypeScript Conventions
+
+Stack: Node.js + Express (backend), React + Vite (frontend), TypeScript, Zod, Knex, JWT.
+
+## Backend layers (`backend/src/`)
+
+- **config** — Zod env, единственный источник настроек
+- **common** — `AppError` / `ErrorCode`, guards, middleware, logger
+- **database** — Knex, migrations, seeds
+- **infrastructure** — Redis, WebSocket, BullMQ, cron, Prometheus
+- **modules/{feature}** — `{feature}.router.ts` + `{feature}.service.ts`
+
+Routers тонкие: parse DTO (Zod) → service → `{ success: true, data }`.  
+Не ходить в `db` из контроллеров, если уже есть service (исключение: тонкий admin SQL).
+
+DI: синглтоны в `app.locals` (`orderBookService`, `wsService`, …), не новый IoC-контейнер.
+
+## Frontend (`frontend/src/`)
+
+- Pages в `pages/`, API-обёртки в `api/`, auth в `auth/`
+- UI: shadcn/Radix + Tailwind; не плодить новые примитивы, если есть `components/ui/`
+- HTTP через `useAuth().request`; не дублировать fetch/token refresh
+- Alias `@/` → `frontend/src`
+
+## Patterns
+
+- Валидация входа — Zod (`*.parse` / `validate()` middleware)
+- Деньги и шары — `decimal.js`, не голый `number` в расчётах ордербука
+- Ошибки — `AppError` + `errorHandler`; фронт читает `{ success, error.code }`
+- Auth: Bearer JWT; роли `user` < `moderator` < `admin` (`requireRole`)
+- Торговля: **order book** (`OrderBookService`). LMSR — legacy (колонка `liquidity_b`, старые тесты)
+
+## Naming
+
+- Routers: `{feature}Router`, export `router as {feature}Router`
+- Services: `{Feature}Service`
+- Tables/columns: snake_case
+- JSON API: camelCase в ответах сервиса, если так уже сделано в модуле — не смешивать в одном endpoint
+
+## Details
+
+See `.ai/conventions.md`, `.ai/architecture.md`, `.ai/components.md`.

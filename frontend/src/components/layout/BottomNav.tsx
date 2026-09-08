@@ -1,14 +1,18 @@
-import { Home, BarChart3, PlusCircle, User, Briefcase } from "lucide-react";
+import { Home, PlusCircle, User, Briefcase, Coins } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "@/auth/AuthContext";
+import { isStaffRole } from "@/lib/money";
 
 export function BottomNav() {
   const location = useLocation();
   const { t } = useI18n();
+  const { user } = useAuth();
   const items = [
     { icon: Home, label: t("nav.markets"), path: "/" },
     { icon: Briefcase, label: t("nav.portfolio"), path: "/portfolio" },
-    { icon: PlusCircle, label: t("nav.create"), path: "/create" },
+    { icon: Coins, label: t("nav.shop"), path: "/shop" },
+    ...(isStaffRole(user?.role) ? [{ icon: PlusCircle, label: t("nav.create"), path: "/create" }] : []),
     { icon: User, label: t("nav.profile"), path: "/profile" },
   ];
 

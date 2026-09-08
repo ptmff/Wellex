@@ -8,6 +8,7 @@ import { useAuth } from "@/auth/AuthContext";
 import { listMarkets, type BackendMarket, type ListMarketsInput } from "@/api/markets";
 import { parseDate } from "@/lib/date";
 import { useI18n } from "@/i18n/I18nContext";
+import { formatWx } from "@/lib/money";
 
 type Filter = "all" | "trending" | "new" | "ending";
 
@@ -102,6 +103,12 @@ export default function MarketsPage() {
     return categoryFiltered;
   }, [filter, marketsQuery.data, categoryKey]);
 
+  const volume24h = useMemo(
+    () => (marketsQuery.data?.data ?? []).reduce((sum, m) => sum + (m.stats.volume24h ?? 0), 0),
+    [marketsQuery.data],
+  );
+  const marketsTotal = marketsQuery.data?.total ?? 0;
+
   return (
     <AppLayout>
       {/* Hero */}
@@ -117,9 +124,9 @@ export default function MarketsPage() {
       {/* Stats bar */}
       <div className="grid grid-cols-3 gap-3 mb-6">
         {[
-          { label: t("nav.markets"), value: "248" },
-          { label: language === "ru" ? "Объем 24ч" : "24h Volume", value: "$12.4M" },
-          { label: language === "ru" ? "Трейдеры" : "Traders", value: "18.2K" },
+          { label: t("nav.markets"), value: String(marketsTotal) },
+          { label: language === "ru" ? "Объем 24ч" : "24h Volume", value: formatWx(volume24h, { compact: true }) },
+          { label: language === "ru" ? "На странице" : "On page", value: String(filtered.length) },
         ].map((stat) => (
           <div key={stat.label} className="rounded-xl bg-card border border-border/50 p-3 text-center">
             <div className="text-lg font-bold text-foreground">{stat.value}</div>

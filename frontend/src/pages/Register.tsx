@@ -70,7 +70,11 @@ export default function Register() {
     <AppLayout>
       <div className="max-w-md mx-auto">
         <h1 className="text-2xl font-bold mb-2">{language === "ru" ? "Создать аккаунт" : "Create account"}</h1>
-        <p className="text-sm text-muted-foreground mb-6">{language === "ru" ? "Зарегистрируйтесь, чтобы начать торговать." : "Register to start trading."}</p>
+        <p className="text-sm text-muted-foreground mb-6">
+          {language === "ru"
+            ? "Новым игрокам начисляется 1000 WX. Это игровая валюта, не реальные деньги."
+            : "New players receive 1000 WX. This is in-game currency, not real money."}
+        </p>
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div className="space-y-2">

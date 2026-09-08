@@ -11,6 +11,12 @@ router.get('/', async (req: Request, res: Response) => {
   res.json({ success: true, data: result });
 });
 
+// GET /api/v1/markets/categories
+router.get('/categories', async (_req: Request, res: Response) => {
+  const categories = await marketsService.listCategories();
+  res.json({ success: true, data: categories });
+});
+
 // GET /api/v1/markets/:id
 router.get('/:id', async (req: Request, res: Response) => {
   const market = await marketsService.findById(req.params.id);
@@ -18,8 +24,12 @@ router.get('/:id', async (req: Request, res: Response) => {
 });
 
 // POST /api/v1/markets
-router.post('/', authenticate(), async (req: Request, res: Response) => {
+router.post('/', authenticate(), requireRole('moderator', 'admin'), async (req: Request, res: Response) => {
   const market = await marketsService.create(req.user!.id, req.body);
+  const marketMaker = req.app.locals.marketMakerService as { seedMarket?: (id: string, price: number) => Promise<number> } | undefined;
+  if (marketMaker?.seedMarket) {
+    await marketMaker.seedMarket(market.id, market.prices?.yes ?? 0.5);
+  }
   res.status(201).json({ success: true, data: market });
 });
 

@@ -1,0 +1,48 @@
+---
+description: Knex migrations и seeds — env + npm scripts из backend/
+alwaysApply: true
+---
+
+# Knex migrations (Wellex)
+
+Схема живёт в `backend/src/database/migrations/001_initial_schema.ts` (идемпотентный `createTableIfMissing` + `ALTER ... IF NOT EXISTS`).  
+Connection — Knex в `backend/src/database/connection.ts`, креды **только** из env через Zod (`backend/src/config/index.ts`).
+
+Без env процесс падает: `Invalid environment variables`.
+
+## Обязательно для агента
+
+Перед **любой** миграцией или сидом:
+
+1. Поднять Postgres (и Redis, если нужен полный стек): `docker-compose up -d postgres redis` из `backend/`.
+2. Задать переменные (`DB_HOST=localhost`, `DB_PORT=5433`, `DB_NAME=prediction_market`, `DB_USER=postgres`, `DB_PASSWORD=secret` + JWT-секреты ≥32 символов + `ADMIN_SECRET_KEY`).
+3. Запускать npm-скрипты из `backend/`.
+
+```powershell
+cd backend
+$env:DB_HOST = "localhost"
+$env:DB_PORT = "5433"
+$env:DB_NAME = "prediction_market"
+$env:DB_USER = "postgres"
+$env:DB_PASSWORD = "secret"
+$env:JWT_ACCESS_SECRET = "local-dev-access-secret-min-32-chars!!"
+$env:JWT_REFRESH_SECRET = "local-dev-refresh-secret-min-32-chars!"
+$env:ADMIN_SECRET_KEY = "admin-local-dev-key"
+
+npm run migration:run
+npm run seed
+```
+
+CLI сидов: `backend/src/database/seeds/run-seeds-cli.ts` (`npm run seed`).  
+При старте API сиды ещё раз — только если `SEED_ON_START=true`.
+
+## Не путать
+
+- Хост-порт Postgres — **5433**, внутри контейнера — `5432`.
+- Миграции не через `knex migrate:` CLI и не через отдельный knexfile — через `ts-node src/database/run-migrations.ts`.
+- `001_initial_schema.ts` — единственный файл схемы; новые таблицы/колонки добавлять туда идемпотентно, пока нет отдельной нумерованной истории.
+- Не гонять миграции против неизвестного удалённого Postgres.
+
+## После изменения схемы
+
+Обновить `.ai/database.md` и при необходимости `.ai/current_state.md`.

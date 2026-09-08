@@ -56,6 +56,9 @@ export function MarketCard({ market, index = 0 }: { market: BackendMarket; index
                   <TrendingUp className="h-3 w-3" /> {language === "ru" ? "Горячее" : "Hot"}
                 </span>
               )}
+              {market.source === "polymarket" && (
+                <span className="text-[10px] font-medium text-muted-foreground">PM</span>
+              )}
               {isNew && (
                 <span className="text-[10px] font-medium text-warning">{language === "ru" ? "Новое" : "New"}</span>
               )}

@@ -2,132 +2,163 @@ import { db } from '../connection';
 import { logger } from '../../common/logger';
 import bcrypt from 'bcryptjs';
 import { config } from '../../config';
-import Decimal from 'decimal.js';
+
+type SeedUser = {
+  email: string;
+  username: string;
+  password_hash: string;
+  role: string;
+  display_name: string;
+  is_bot?: boolean;
+};
 
 export async function runSeeds(): Promise<void> {
   logger.info('Running seeds...');
 
-  // ── Categories
   const categories = [
-    { name: 'Politics', slug: 'politics', icon: '🏛️' },
-    { name: 'Technology', slug: 'technology', icon: '💻' },
-    { name: 'Sports', slug: 'sports', icon: '⚽' },
-    { name: 'Finance', slug: 'finance', icon: '📈' },
-    { name: 'Science', slug: 'science', icon: '🔬' },
-    { name: 'Entertainment', slug: 'entertainment', icon: '🎬' },
-    { name: 'Crypto', slug: 'crypto', icon: '🪙' },
-    { name: 'World Events', slug: 'world-events', icon: '🌍' },
+    { name: 'Politics', slug: 'politics', icon: 'politics' },
+    { name: 'Technology', slug: 'technology', icon: 'technology' },
+    { name: 'Sports', slug: 'sports', icon: 'sports' },
+    { name: 'Finance', slug: 'finance', icon: 'finance' },
+    { name: 'Science', slug: 'science', icon: 'science' },
+    { name: 'Entertainment', slug: 'entertainment', icon: 'entertainment' },
+    { name: 'Crypto', slug: 'crypto', icon: 'crypto' },
+    { name: 'World Events', slug: 'world-events', icon: 'world-events' },
   ];
 
-  await db('market_categories')
-    .insert(categories)
+  await db('market_categories').insert(categories).onConflict('slug').ignore();
+
+  await db('coin_packages')
+    .insert([
+      { slug: 'starter', name: 'Starter', wx_amount: '500', price_rub: '49.00', sort_order: 1 },
+      { slug: 'pack', name: 'Pack', wx_amount: '2000', price_rub: '149.00', sort_order: 2 },
+      { slug: 'whale', name: 'Whale', wx_amount: '5000', price_rub: '299.00', sort_order: 3 },
+    ])
     .onConflict('slug')
     .ignore();
 
-  // ── Demo users
   const passwordHash = await bcrypt.hash('Password123', 12);
 
-  const users = [
+  const users: SeedUser[] = [
     { email: 'admin@example.com', username: 'admin', password_hash: passwordHash, role: 'admin', display_name: 'Admin' },
     { email: 'moderator@example.com', username: 'moderator', password_hash: passwordHash, role: 'moderator', display_name: 'Moderator' },
-    // Internal fee sink account for exchange/platform fees.
     { email: 'exchange@example.com', username: 'exchange', password_hash: passwordHash, role: 'admin', display_name: 'Exchange' },
     { email: 'alice@example.com', username: 'alice', password_hash: passwordHash, role: 'user', display_name: 'Alice' },
     { email: 'bob@example.com', username: 'bob', password_hash: passwordHash, role: 'user', display_name: 'Bob' },
     { email: 'charlie@example.com', username: 'charlie', password_hash: passwordHash, role: 'user', display_name: 'Charlie' },
+    {
+      email: 'bot.ingest@example.com',
+      username: 'bot_ingest',
+      password_hash: passwordHash,
+      role: 'moderator',
+      display_name: 'Ingest Bot',
+      is_bot: true,
+    },
+    {
+      email: 'bot.mm1@example.com',
+      username: 'bot_mm_1',
+      password_hash: passwordHash,
+      role: 'user',
+      display_name: 'Market Maker 1',
+      is_bot: true,
+    },
+    {
+      email: 'bot.mm2@example.com',
+      username: 'bot_mm_2',
+      password_hash: passwordHash,
+      role: 'user',
+      display_name: 'Market Maker 2',
+      is_bot: true,
+    },
+    {
+      email: 'bot.mm3@example.com',
+      username: 'bot_mm_3',
+      password_hash: passwordHash,
+      role: 'user',
+      display_name: 'Market Maker 3',
+      is_bot: true,
+    },
   ];
 
-  for (const user of users) {
-    const [existing] = await db('users').where('email', user.email).select('id');
-    if (existing) continue;
-
-    const [newUser] = await db('users').insert(user).returning('id');
-
-    await db('balances').insert({
-      user_id: newUser.id,
-      available: config.INITIAL_USER_BALANCE.toFixed(8),
-      reserved: '0',
-      total: config.INITIAL_USER_BALANCE.toFixed(8),
-      available_cash: config.INITIAL_USER_BALANCE.toFixed(8),
-      reserved_cash: '0',
-      currency: 'USD',
-    });
-
-    await db('balance_transactions').insert({
-      user_id: newUser.id,
-      type: 'deposit',
-      amount: config.INITIAL_USER_BALANCE.toFixed(8),
-      balance_before: '0',
-      balance_after: config.INITIAL_USER_BALANCE.toFixed(8),
-      description: 'Initial demo balance (seed)',
+  for (let i = 1; i <= 12; i += 1) {
+    users.push({
+      email: `trader${i}@example.com`,
+      username: `trader${i}`,
+      password_hash: passwordHash,
+      role: 'user',
+      display_name: `Trader ${i}`,
     });
   }
 
-  // ── Sample markets
-  const adminUser = await db('users').where('username', 'admin').first();
-  const techCategory = await db('market_categories').where('slug', 'technology').first();
-  const politicsCategory = await db('market_categories').where('slug', 'politics').first();
-  const cryptoCategory = await db('market_categories').where('slug', 'crypto').first();
+  for (const user of users) {
+    const isBot = Boolean(user.is_bot);
+    const starting = (isBot ? config.BOT_USER_BALANCE : config.INITIAL_USER_BALANCE).toFixed(8);
 
-  const sampleMarkets = [
-    {
-      title: 'Will GPT-5 be released before end of 2025?',
-      description: 'OpenAI has been developing the next generation of their flagship language model. This market resolves YES if OpenAI officially releases a model called GPT-5 to the public before December 31, 2025.',
-      resolution_criteria: 'Official OpenAI announcement of GPT-5 public release before Dec 31, 2025.',
-      category_id: techCategory?.id,
-      closes_at: new Date('2025-12-31'),
-      initial_liquidity: 500,
-      tags: JSON.stringify(['AI', 'OpenAI', 'GPT']),
-      is_featured: true,
-    },
-    {
-      title: 'Will Bitcoin exceed $150,000 by end of 2025?',
-      description: 'Bitcoin has seen significant price action recently. This market resolves YES if Bitcoin (BTC) trades at or above $150,000 USD on any major exchange before December 31, 2025.',
-      resolution_criteria: 'BTC/USD price on Binance, Coinbase, or Kraken reaches $150,000.',
-      category_id: cryptoCategory?.id,
-      closes_at: new Date('2025-12-31'),
-      initial_liquidity: 1000,
-      tags: JSON.stringify(['Bitcoin', 'Crypto', 'Price']),
-      is_featured: true,
-    },
-    {
-      title: 'Will there be a major AI regulation bill passed in the US in 2025?',
-      description: 'Congress has been debating AI regulation. This market resolves YES if a comprehensive AI regulation bill is signed into law by the US President before December 31, 2025.',
-      resolution_criteria: 'A comprehensive federal AI regulation bill signed into law.',
-      category_id: politicsCategory?.id,
-      closes_at: new Date('2025-12-31'),
-      initial_liquidity: 300,
-      tags: JSON.stringify(['AI', 'Regulation', 'US', 'Policy']),
-      is_featured: false,
-    },
-  ];
+    let userId: string;
+    const existing = await db('users').where('email', user.email).first();
+    if (existing) {
+      userId = existing.id;
+      await db('users').where('id', userId).update({
+        is_bot: isBot,
+        role: user.role,
+        display_name: user.display_name,
+        updated_at: new Date(),
+      });
+    } else {
+      const [newUser] = await db('users')
+        .insert({
+          email: user.email,
+          username: user.username,
+          password_hash: user.password_hash,
+          role: user.role,
+          display_name: user.display_name,
+          is_bot: isBot,
+        })
+        .returning('id');
+      userId = newUser.id;
+    }
 
-  for (const market of sampleMarkets) {
-    const exists = await db('markets').where('title', market.title).first();
-    if (exists) continue;
+    const existingBalance = await db('balances').where('user_id', userId).first();
+    if (!existingBalance) {
+      await db('balances').insert({
+        user_id: userId,
+        available: starting,
+        reserved: '0',
+        total: starting,
+        available_cash: starting,
+        reserved_cash: '0',
+        currency: config.CURRENCY_CODE,
+      });
+    } else {
+      await db('balances').where('user_id', userId).update({ currency: config.CURRENCY_CODE });
+      if (isBot) {
+        await db('balances').where('user_id', userId).update({
+          available: starting,
+          available_cash: starting,
+          total: starting,
+          reserved: '0',
+          reserved_cash: '0',
+        });
+      }
+    }
 
-    const b = new Decimal(market.initial_liquidity).div(Math.LN2);
+    const bonusLabel = isBot ? 'Bot treasury (seed)' : `Welcome bonus ${config.CURRENCY_CODE} (seed)`;
+    const existingDeposit = await db('balance_transactions')
+      .where('user_id', userId)
+      .andWhere('description', bonusLabel)
+      .first();
 
-    await db('markets').insert({
-      creator_id: adminUser.id,
-      ...market,
-      status: 'active',
-      liquidity_b: b.toFixed(8),
-      yes_shares: '0',
-      no_shares: '0',
-      current_yes_price: '0.5',
-      current_no_price: '0.5',
-      liquidity_total: market.initial_liquidity,
-      metadata: '{}',
-    });
+    if (!existingDeposit && !existingBalance) {
+      await db('balance_transactions').insert({
+        user_id: userId,
+        type: isBot ? 'deposit' : 'signup_bonus',
+        amount: starting,
+        balance_before: '0',
+        balance_after: starting,
+        description: bonusLabel,
+      });
+    }
   }
 
   logger.info('✅ Seeds completed');
 }
-
-runSeeds()
-  .then(() => process.exit(0))
-  .catch((err) => {
-    logger.error('Seeds failed', { error: err.message });
-    process.exit(1);
-  });

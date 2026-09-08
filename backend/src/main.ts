@@ -12,6 +12,8 @@ import { errorHandler } from './common/errors';
 import { requestId, responseTime, sanitizeResponse } from './common/middleware';
 import { metricsMiddleware, getMetrics, getContentType } from './infrastructure/metrics/prometheus';
 import { checkDatabaseConnection } from './database/connection';
+import { runMigrations } from './database/migrations/001_initial_schema';
+import { runSeeds } from './database/seeds/run-seeds';
 import { redisClient } from './infrastructure/redis/cache.service';
 import { WebSocketService } from './infrastructure/websocket/ws.service';
 import { AnalyticsService } from './modules/analytics/analytics.service';
@@ -19,6 +21,9 @@ import { ActivityService } from './modules/activity/activity.service';
 import { OrderBookService } from './modules/orders/orderbook.service';
 import { startScheduledJobs } from './infrastructure/jobs/scheduler';
 import { startWorkers, scheduleRecurringJobs, shutdownQueues } from './infrastructure/queue/queues';
+import { PolymarketClient } from './modules/ingest/polymarket.client';
+import { IngestService } from './modules/ingest/ingest.service';
+import { MarketMakerService } from './modules/bots/market-maker.service';
 
 // Routers
 import { authRouter } from './modules/auth/auth.router';
@@ -30,10 +35,15 @@ import { portfolioRouter } from './modules/portfolio/portfolio.router';
 import { analyticsRouter } from './modules/analytics/analytics.router';
 import { activityRouter } from './modules/activity/activity.router';
 import { adminRouter } from './modules/admin/admin.router';
+import { economyRouter } from './modules/economy/economy.router';
 
 async function bootstrap(): Promise<void> {
   // ── Validate connections
   await checkDatabaseConnection();
+  await runMigrations();
+  if (config.SEED_ON_START) {
+    await runSeeds();
+  }
 
   const app = express();
   const httpServer = createServer(app);
@@ -43,11 +53,15 @@ async function bootstrap(): Promise<void> {
   const activityService = new ActivityService();
   const analyticsService = new AnalyticsService();
   const orderBookService = new OrderBookService(wsService, activityService);
+  const marketMakerService = new MarketMakerService(orderBookService);
+  const ingestService = new IngestService(new PolymarketClient(), marketMakerService, orderBookService);
 
   app.locals.wsService = wsService;
   app.locals.analyticsService = analyticsService;
   app.locals.activityService = activityService;
   app.locals.orderBookService = orderBookService;
+  app.locals.ingestService = ingestService;
+  app.locals.marketMakerService = marketMakerService;
 
   // ── WebSocket
   wsService.initialize(httpServer);
@@ -156,6 +170,7 @@ async function bootstrap(): Promise<void> {
   app.use(`${apiV1}/analytics`, limiter, analyticsRouter);
   app.use(`${apiV1}/activity`, limiter, activityRouter);
   app.use(`${apiV1}/admin`, limiter, adminRouter);
+  app.use(`${apiV1}/economy`, limiter, economyRouter);
 
   // 404 handler
   app.use((_req, res) => {
@@ -174,9 +189,14 @@ async function bootstrap(): Promise<void> {
 
   // ── Start background jobs
   if (config.NODE_ENV !== 'test') {
-    startScheduledJobs();
+    startScheduledJobs(ingestService);
     startWorkers(analyticsService, orderBookService);
     await scheduleRecurringJobs();
+    if (config.INGEST_ON_START) {
+      ingestService.runDailySync().catch((err) => {
+        logger.error('Startup ingest failed', { error: (err as Error).message });
+      });
+    }
   }
 
   // ── Start HTTP server

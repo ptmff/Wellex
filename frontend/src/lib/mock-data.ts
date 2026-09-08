@@ -207,7 +207,7 @@ export const positions: Position[] = [
 export const categories = ["All", "Crypto", "Tech", "Politics", "Economics", "Science", "Sports"];
 
 export const formatVolume = (v: number): string => {
-  if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`;
-  if (v >= 1_000) return `$${(v / 1_000).toFixed(0)}K`;
-  return `$${v}`;
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M WX`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K WX`;
+  return `${v} WX`;
 };

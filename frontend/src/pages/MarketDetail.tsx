@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { getMarket, getMarketPriceLine, getMarketStats, updateMarketStatus, type BackendMarket, type MarketStats, type PriceLinePoint } from "@/api/markets";
 import { formatDateToLocaleDateString, formatRelativeTime } from "@/lib/date";
 import { useI18n } from "@/i18n/I18nContext";
+import { formatWx } from "@/lib/money";
 
 type RangeKey = "1D" | "1W" | "1M" | "All";
 
@@ -224,7 +225,7 @@ export default function MarketDetail() {
                   stats.recentTrades.map((trade, i) => {
                     const side = String(trade.side).toLowerCase() === "yes" ? "YES" : "NO";
                     const priceCents = Math.round(trade.price * 100);
-                    const amountUsd = trade.totalValue.toFixed(2);
+                    const amountWx = formatWx(trade.totalValue);
                     return (
                       <motion.div
                         key={trade.id ?? i}
@@ -251,7 +252,7 @@ export default function MarketDetail() {
                           </div>
                         </div>
                         <div className="text-right">
-                          <div className="text-xs font-medium">${amountUsd}</div>
+                          <div className="text-xs font-medium">{amountWx}</div>
                         </div>
                       </motion.div>
                     );

@@ -101,6 +101,16 @@ export class MarketsService {
     return this.formatMarket(market);
   }
 
+  async listCategories() {
+    const rows = await db('market_categories').where('is_active', true).orderBy('name', 'asc');
+    return rows.map((c: { id: string; name: string; slug: string; icon?: string }) => ({
+      id: c.id,
+      name: c.name,
+      slug: c.slug,
+      icon: c.icon ?? null,
+    }));
+  }
+
   async findById(marketId: string) {
     const cacheKey = `market:${marketId}`;
     const cached = await marketCache.get(cacheKey);
@@ -144,7 +154,7 @@ export class MarketsService {
         // Needed for frontend category selection/creation: `formatMarket()` expects `market.category_id`.
         'm.category_id',
         'm.closes_at', 'm.created_at', 'm.is_featured', 'm.tags',
-        'm.image_url',
+        'm.image_url', 'm.external_source', 'm.external_id',
         'c.name as category_name', 'c.slug as category_slug',
         'u.username as creator_username'
       );
@@ -198,7 +208,7 @@ export class MarketsService {
     if (!market) throw new NotFoundError('Market', marketId);
     if (market.creator_id !== userId) {
       const user = await db('users').where('id', userId).select('role').first();
-      if (user?.role === 'user') {
+      if (user?.role !== 'admin' && user?.role !== 'moderator') {
         throw new AppError(ErrorCode.FORBIDDEN, 'Not authorized to update this market', 403);
       }
     }
@@ -325,6 +335,7 @@ export class MarketsService {
       resolutionNote: market.resolution_note,
       isFeatured: market.is_featured,
       tags: typeof market.tags === 'string' ? JSON.parse(market.tags) : (market.tags ?? []),
+      source: market.external_source ?? null,
       createdAt: market.created_at,
       updatedAt: market.updated_at,
     };

@@ -11,6 +11,7 @@ import MarketDetail from "./pages/MarketDetail";
 import Portfolio from "./pages/Portfolio";
 import Profile from "./pages/Profile";
 import CreateMarket from "./pages/CreateMarket";
+import Shop from "./pages/Shop";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
@@ -46,9 +47,17 @@ const App = () => (
                 }
               />
               <Route
-                path="/create"
+                path="/shop"
                 element={
                   <ProtectedRoute>
+                    <Shop />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/create"
+                element={
+                  <ProtectedRoute staffOnly>
                     <CreateMarket />
                   </ProtectedRoute>
                 }

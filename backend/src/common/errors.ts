@@ -103,7 +103,7 @@ export class InsufficientBalanceError extends AppError {
   constructor(available: number, required: number) {
     super(
       ErrorCode.INSUFFICIENT_BALANCE,
-      `Insufficient balance: available ${available}, required ${required}`,
+      `Insufficient ${config.CURRENCY_CODE}: available ${available}, required ${required}`,
       400,
       { available, required }
     );

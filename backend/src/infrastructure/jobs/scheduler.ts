@@ -4,10 +4,11 @@ import { AnalyticsService } from '../../modules/analytics/analytics.service';
 import { marketCache } from '../redis/cache.service';
 import { logger } from '../../common/logger';
 import { activeMarketsGauge, registeredUsersGauge } from '../metrics/prometheus';
+import { IngestService } from '../../modules/ingest/ingest.service';
 
 const analyticsService = new AnalyticsService();
 
-export function startScheduledJobs(): void {
+export function startScheduledJobs(ingestService?: IngestService): void {
   // ── Every minute: aggregate 1m candles
   cron.schedule('* * * * *', async () => {
     try {
@@ -40,11 +41,15 @@ export function startScheduledJobs(): void {
     }
   });
 
-  // ── Midnight: aggregate daily candles, reset 24h volumes
+  // ── Midnight: daily candles, 24h volumes, Polymarket ingest
   cron.schedule('0 0 * * *', async () => {
     try {
       await analyticsService.aggregateCandles('1d');
       await reset24hVolumes();
+      if (ingestService) {
+        const result = await ingestService.runDailySync();
+        logger.info('Daily Polymarket ingest', result);
+      }
     } catch (err) {
       logger.error('Daily jobs failed', { error: (err as Error).message });
     }

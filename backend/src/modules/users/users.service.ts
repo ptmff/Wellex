@@ -10,7 +10,7 @@ export const UpdateProfileDto = z.object({
   preferences: z
     .object({
       theme: z.enum(['light', 'dark', 'system']).optional(),
-      currency: z.enum(['USD', 'EUR', 'RUB']).optional(),
+      currency: z.enum(['WX', 'USD', 'EUR', 'RUB']).optional(),
       notifications: z
         .object({
           trades: z.boolean().optional(),

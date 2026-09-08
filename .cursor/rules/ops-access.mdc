@@ -1,0 +1,72 @@
+---
+description: Доступ к локальной PostgreSQL и Redis (Docker)
+alwaysApply: true
+---
+
+# Ops Access — БД и Redis
+
+Когда пользователь просит **посмотреть БД** или **Redis** — использовать эти инструкции.
+
+Основная СУБД — **PostgreSQL**. Кэш и очереди — **Redis**. Прод-стенд не задокументирован: не ходить на внешние хосты «по привычке».
+
+| Среда | Сервис | Хост / порт | База | Доступ |
+|-------|--------|-------------|------|--------|
+| **Local** | PostgreSQL 16 (`postgres`) | `localhost:5433` | **`prediction_market`** | Полный |
+| **Local** | Redis 7 (`redis`) | `localhost:6379` | `0` | Полный |
+| **Local API** | Node (compose `api` или `npm run start:dev`) | `localhost:3000` | — | `/health`, `/api/v1` |
+| **Local UI** | Vite | `localhost:8080` | — | proxy `/api` и `/ws` → `:3000` |
+
+По умолчанию локальные запросы → `prediction_market` на порту **5433** (не 5432: на хосте может висеть другой Postgres).
+
+## Локальная PostgreSQL
+
+Контейнер из `backend/docker-compose.yml`, хост-порт **5433**.
+
+```
+Host=127.0.0.1;Port=5433;Database=prediction_market;Username=postgres;Password=secret;
+```
+
+Запрос через `psql` в контейнере (имя сервиса `postgres`):
+
+```powershell
+'docker compose -f backend/docker-compose.yml ps -q postgres' | Out-Null
+'docker compose -f backend/docker-compose.yml exec -T postgres psql -U postgres -d prediction_market -c "select id, username, role from users order by created_at desc limit 10;"'
+```
+
+Или stdin:
+
+```powershell
+'select id, username, role from users order by created_at desc limit 10;' |
+  docker compose -f backend/docker-compose.yml exec -T postgres psql -U postgres -d prediction_market
+```
+
+Идентификаторы в схеме — **snake_case** (`users`, `markets`, `orders`). Кавычки PascalCase не нужны.
+
+Локально можно выполнять любые запросы — **только если пользователь явно просит изменить данные**.
+
+## Локальный Redis
+
+```powershell
+docker compose -f backend/docker-compose.yml exec -T redis redis-cli ping
+docker compose -f backend/docker-compose.yml exec -T redis redis-cli keys '*'
+```
+
+Не `FLUSHALL` / не удалять ключи без явной просьбы.
+
+## Health
+
+```
+GET http://localhost:3000/health
+GET http://localhost:3000/health/detailed
+GET http://localhost:3000/metrics
+```
+
+## Типичные ловушки
+
+| Ловушка | Решение |
+|---------|---------|
+| Подключился к `localhost:5432` | App/Knex → порт **5433** (`DB_PORT`) |
+| `config` падает при старте | Нужны `DB_*`, `JWT_ACCESS_SECRET` (≥32), `JWT_REFRESH_SECRET` (≥32), `ADMIN_SECRET_KEY` |
+| README говорит про LMSR | Устарело. Торговля — **order book only** (`OrderBookService`) |
+| Сиды не применились | `SEED_ON_START=true` у compose `api`, либо `npm run seed` из `backend/` |
+| Фронт бьёт не туда | Vite proxy `/api` и `/ws` на `:3000`; `VITE_API_BASE_URL` по умолчанию `/api/v1` |

@@ -7,6 +7,7 @@ import { useAuth } from "@/auth/AuthContext";
 import type { PaginatedResult, PortfolioSummaryResponse, PortfolioTrade } from "@/lib/portfolio";
 import { formatRelativeTime } from "@/lib/date";
 import { useI18n } from "@/i18n/I18nContext";
+import { formatWx } from "@/lib/money";
 
 export default function Profile() {
   const { user, request, logout } = useAuth();
@@ -64,7 +65,7 @@ export default function Profile() {
   }, [portfolio]);
 
   const totalPnlClass = stats.totalPnl >= 0 ? "text-success" : "text-danger";
-  const totalPnlText = `${stats.totalPnl >= 0 ? "+" : ""}$${Math.abs(stats.totalPnl).toLocaleString()}`;
+  const totalPnlText = formatWx(stats.totalPnl, { signed: true });
 
   return (
     <AppLayout>
@@ -87,7 +88,7 @@ export default function Profile() {
 
           <div className="grid grid-cols-3 gap-3 mt-5">
             <div className="text-center p-3 rounded-lg bg-secondary/50">
-              <div className="text-lg font-bold">${stats.totalBalance.toLocaleString()}</div>
+              <div className="text-lg font-bold">{formatWx(stats.totalBalance)}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
             </div>
             <div className="text-center p-3 rounded-lg bg-secondary/50">
@@ -132,7 +133,7 @@ export default function Profile() {
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-medium">
-                        ${t.totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        {formatWx(t.totalValue)}
                       </div>
                       <div className="text-[10px] text-muted-foreground">{formatRelativeTime(t.executedAt)}</div>
                     </div>

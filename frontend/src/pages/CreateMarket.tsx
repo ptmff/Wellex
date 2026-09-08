@@ -4,7 +4,7 @@ import { Eye, Calendar, Tag, HelpCircle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/auth/AuthContext";
 import { useQuery } from "@tanstack/react-query";
-import { listMarkets, type BackendMarket, type CreateMarketInput, createMarket } from "@/api/markets";
+import { listMarketCategories, type CreateMarketInput, createMarket } from "@/api/markets";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { useI18n } from "@/i18n/I18nContext";
@@ -23,31 +23,13 @@ export default function CreateMarket() {
   const { language } = useI18n();
 
   const categoriesQuery = useQuery({
-    queryKey: ["markets-create-categories"],
-    queryFn: () =>
-      listMarkets(request, {
-        page: 1,
-        limit: 50,
-        status: "active",
-        sortBy: "created_at",
-        sortOrder: "desc",
-      }),
+    queryKey: ["market-categories"],
+    queryFn: () => listMarketCategories(request),
     enabled: !!request,
     staleTime: 60_000,
   });
 
-  const categories = useMemo(() => {
-    const items = categoriesQuery.data?.data ?? [];
-    const map = new Map<string, { id: string; name: string }>();
-    for (const m of items as BackendMarket[]) {
-      if (!m.category) continue;
-      // Backend list() может возвращать категорию без id, если поле не выбрано в SELECT.
-      // Но backend сейчас исправлен — id должен приходить, а здесь делаем защиту.
-      if (!m.category.id) continue;
-      if (!map.has(m.category.id)) map.set(m.category.id, { id: m.category.id, name: m.category.name });
-    }
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-  }, [categoriesQuery.data]);
+  const categories = categoriesQuery.data ?? [];
 
   const selectedCategoryName = useMemo(() => categories.find((c) => c.id === categoryId)?.name ?? "", [categories, categoryId]);
 
@@ -120,7 +102,9 @@ export default function CreateMarket() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-bold mb-1">{language === "ru" ? "Создать рынок" : "Create Market"}</h1>
         <p className="text-sm text-muted-foreground mb-6">
-          {language === "ru" ? "Создайте новый рынок прогнозов для сообщества." : "Create a new prediction market for the community to trade on"}
+          {language === "ru"
+            ? "Создание рынков доступно модераторам и администраторам. Каталог также наполняется ботом с Polymarket."
+            : "Market creation is limited to moderators and admins. The catalog is also filled by the Polymarket ingest bot."}
         </p>
 
         {!preview ? (

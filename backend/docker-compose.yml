@@ -19,7 +19,9 @@ services:
       - JWT_ACCESS_SECRET=local-dev-access-secret-min-32-chars!!
       - JWT_REFRESH_SECRET=local-dev-refresh-secret-min-32-chars!
       - ADMIN_SECRET_KEY=admin-local-dev-key
-      - INITIAL_USER_BALANCE=10000
+      - INITIAL_USER_BALANCE=1000
+      - SEED_ON_START=true
+      - INGEST_ON_START=true
     depends_on:
       postgres:
         condition: service_healthy
@@ -37,7 +39,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: secret
     ports:
-      - '5432:5432'
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

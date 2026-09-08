@@ -43,6 +43,8 @@ import type {
 import { formatDateToLocaleDateString, formatDateToLocaleString, parseDate } from "@/lib/date";
 import { executeMarketTrade, getTradeQuote } from "@/api/trading";
 import { useI18n } from "@/i18n/I18nContext";
+import { formatWx } from "@/lib/money";
+import { Link } from "react-router-dom";
 
 type ChartPoint = {
   time: string;
@@ -258,26 +260,34 @@ export default function Portfolio() {
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
         <h1 className="text-2xl font-bold mb-6">{language === "ru" ? "Портфель" : "Portfolio"}</h1>
+        {user && !isPortfolioLoading && availableBalance <= 0 ? (
+          <div className="rounded-xl border border-border/50 bg-card p-4 mb-4 text-sm">
+            {language === "ru" ? "Баланс пуст. " : "Balance is empty. "}
+            <Link to="/shop" className="text-primary hover:underline">
+              {language === "ru" ? "Купить WX или посмотреть рекламу" : "Buy WX or watch an ad"}
+            </Link>
+          </div>
+        ) : null}
 
         {/* Balance cards */}
         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Доступный баланс" : "Available Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${availableBalance.toLocaleString()}`}</div>
+            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(availableBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Зарезервированный баланс" : "Reserved Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${reservedBalance.toLocaleString()}`}</div>
+            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(reservedBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : `$${totalBalance.toLocaleString()}`}</div>
+            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(totalBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий P&L" : "Total P&L"}</div>
             <div className="flex items-center gap-1.5">
               <span className={`text-2xl font-bold ${isPnlPositive ? "text-success" : "text-danger"}`}>
-                {isPortfolioLoading ? "…" : `${isPnlPositive ? "+" : "-"}$${Math.abs(totalPnl).toLocaleString()}`}
+                {isPortfolioLoading ? "…" : formatWx(totalPnl, { signed: true })}
               </span>
               <span
                 className={`flex items-center text-xs ${
@@ -330,7 +340,7 @@ export default function Portfolio() {
                   tick={{ fontSize: 11, fill: "hsl(215, 12%, 50%)" }}
                   axisLine={false}
                   tickLine={false}
-                  tickFormatter={(v) => `$${(v / 1000).toFixed(1)}K`}
+                  tickFormatter={(v) => formatWx(v, { compact: true, digits: 1 })}
                 />
                 <Tooltip
                   contentStyle={{
@@ -340,7 +350,7 @@ export default function Portfolio() {
                     fontSize: "12px",
                   }}
                   labelStyle={{ color: "hsl(215, 12%, 50%)" }}
-                  formatter={(v: number) => [`$${v.toFixed(0)}`, language === "ru" ? "Значение" : "Value"]}
+                  formatter={(v: number) => [formatWx(v, { digits: 0 }), language === "ru" ? "Значение" : "Value"]}
                 />
                 <Area
                   type="monotone"
@@ -392,7 +402,7 @@ export default function Portfolio() {
                       ) : (
                         <ArrowDownRight className="h-3.5 w-3.5" />
                       )}
-                      ${Math.abs(pos.pnl)}
+                      {formatWx(Math.abs(pos.pnl))}
                     </div>
                     <div className={`text-[11px] ${pos.pnl >= 0 ? "text-success" : "text-danger"}`}>
                       {pos.pnlPercent > 0 ? "+" : ""}
@@ -430,19 +440,19 @@ export default function Portfolio() {
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{language === "ru" ? "Проторговано" : "Total traded"}</span>
                     <span className="font-medium">
-                      ${pnlSummary?.trading.totalTraded?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
+                      {formatWx(pnlSummary?.trading.totalTraded ?? 0)}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{language === "ru" ? "Комиссии" : "Fees"}</span>
                     <span className="font-medium">
-                      ${pnlSummary?.trading.totalFees?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
+                      {formatWx(pnlSummary?.trading.totalFees ?? 0)}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{language === "ru" ? "Средний размер сделки" : "Avg trade size"}</span>
                     <span className="font-medium">
-                      ${pnlSummary?.trading.avgTradeSize?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
+                      {formatWx(pnlSummary?.trading.avgTradeSize ?? 0)}
                     </span>
                   </div>
                 </div>
@@ -455,16 +465,13 @@ export default function Portfolio() {
                     <span
                       className={`font-medium ${pnlSummary?.pnl.realizedFromTrades >= 0 ? "text-success" : "text-danger"}`}
                     >
-                      {pnlSummary?.pnl.realizedFromTrades >= 0 ? "+" : "-"}$
-                      {Math.abs(pnlSummary?.pnl.realizedFromTrades ?? 0).toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatWx(pnlSummary?.pnl.realizedFromTrades ?? 0, { signed: true })}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{language === "ru" ? "Выплаты по резолюции" : "Resolution payouts"}</span>
                     <span className="font-medium">
-                      ${pnlSummary?.pnl.resolutionPayouts?.toLocaleString(undefined, { maximumFractionDigits: 2 }) ?? "0.00"}
+                      {formatWx(pnlSummary?.pnl.resolutionPayouts ?? 0)}
                     </span>
                   </div>
                   <div className="flex justify-between gap-3 pt-1 border-t border-border/30">
@@ -472,10 +479,7 @@ export default function Portfolio() {
                     <span
                       className={`font-medium ${pnlSummary?.pnl.totalRealized >= 0 ? "text-success" : "text-danger"}`}
                     >
-                      {pnlSummary?.pnl.totalRealized >= 0 ? "+" : "-"}$
-                      {Math.abs(pnlSummary?.pnl.totalRealized ?? 0).toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
+                      {formatWx(pnlSummary?.pnl.totalRealized ?? 0, { signed: true })}
                     </span>
                   </div>
                 </div>
@@ -515,7 +519,7 @@ export default function Portfolio() {
                       <TableCell className="text-right">{Math.round(t.price * 100)}¢</TableCell>
                       <TableCell className="text-right">{t.quantity}</TableCell>
                       <TableCell className="text-right">
-                        ${t.totalValue.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        {formatWx(t.totalValue)}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -577,10 +581,10 @@ export default function Portfolio() {
                     </TableCell>
                     <TableCell className="max-w-[240px]">{tx.description}</TableCell>
                     <TableCell className="text-right">
-                      ${tx.amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {formatWx(tx.amount)}
                     </TableCell>
                     <TableCell className="text-right">
-                      ${tx.balanceAfter.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      {formatWx(tx.balanceAfter)}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -638,7 +642,7 @@ export default function Portfolio() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{language === "ru" ? "Оценочная выручка" : "Estimated proceeds"}</span>
                   <span className="font-medium">
-                    {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.totalCost.toFixed(2)}` : "—"}
+                    {marketCloseQuoteQuery.data ? formatWx(marketCloseQuoteQuery.data.totalCost) : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -650,7 +654,7 @@ export default function Portfolio() {
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">{language === "ru" ? "Комиссии" : "Fees"}</span>
                   <span className="font-medium">
-                    {marketCloseQuoteQuery.data ? `$${marketCloseQuoteQuery.data.fee.toFixed(2)}` : "—"}
+                    {marketCloseQuoteQuery.data ? formatWx(marketCloseQuoteQuery.data.fee) : "—"}
                   </span>
                 </div>
                 <div className="flex justify-between">

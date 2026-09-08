@@ -8,7 +8,8 @@ export const PortfolioHistoryDto = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
   type: z.enum([
-    'deposit', 'withdrawal', 'trade_debit', 'trade_credit', 'fee', 'adjustment', 'refund'
+    'deposit', 'withdrawal', 'trade_debit', 'trade_credit', 'fee', 'adjustment', 'refund',
+    'purchase', 'ad_reward', 'signup_bonus',
   ]).optional(),
 });
 

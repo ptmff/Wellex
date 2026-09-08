@@ -14,7 +14,7 @@
     "test:cov": "jest --coverage",
     "migration:run": "ts-node src/database/run-migrations.ts",
     "migration:revert": "ts-node src/database/revert-migration.ts",
-    "seed": "ts-node src/database/seeds/run-seeds.ts"
+    "seed": "ts-node src/database/seeds/run-seeds-cli.ts"
   },
   "dependencies": {
     "express": "^4.18.2",

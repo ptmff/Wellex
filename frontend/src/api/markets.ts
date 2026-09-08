@@ -40,6 +40,7 @@ export type BackendMarket = {
   resolutionNote: any;
   isFeatured: boolean;
   tags: string[];
+  source?: string | null;
   createdAt: any; // ISO
   updatedAt: any; // ISO
 };
@@ -146,6 +147,12 @@ export async function listMarkets(request: AuthRequest, input: ListMarketsInput 
   });
 
   return request<MarketListResponse>(`/markets${qs}`, { method: "GET" });
+}
+
+export async function listMarketCategories(request: AuthRequest) {
+  return request<Array<{ id: string; name: string; slug: string; icon: string | null }>>("/markets/categories", {
+    method: "GET",
+  });
 }
 
 export async function getMarket(request: AuthRequest, marketId: string) {

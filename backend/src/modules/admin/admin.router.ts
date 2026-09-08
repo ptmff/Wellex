@@ -168,4 +168,14 @@ router.get('/stats', requireRole('admin'), async (req: Request, res: Response) =
   });
 });
 
+// POST /api/v1/admin/ingest/run
+router.post('/ingest/run', requireRole('admin'), async (req: Request, res: Response) => {
+  const ingestService = req.app.locals.ingestService as { runDailySync: () => Promise<unknown> } | undefined;
+  if (!ingestService?.runDailySync) {
+    throw new AppError(ErrorCode.INTERNAL_ERROR, 'Ingest service is not available', 500);
+  }
+  const result = await ingestService.runDailySync();
+  res.json({ success: true, data: result });
+});
+
 export { router as adminRouter };

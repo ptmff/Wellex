@@ -4,6 +4,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useAuth } from "@/auth/AuthContext";
 import { useI18n } from "@/i18n/I18nContext";
+import { isStaffRole } from "@/lib/money";
 
 export function Navbar() {
   const location = useLocation();
@@ -14,7 +15,8 @@ export function Navbar() {
   const navLinks = [
     { label: t("nav.markets"), path: "/" },
     { label: t("nav.portfolio"), path: "/portfolio" },
-    { label: t("nav.create"), path: "/create" },
+    { label: t("nav.shop"), path: "/shop" },
+    ...(isStaffRole(user?.role) ? [{ label: t("nav.create"), path: "/create" }] : []),
   ];
 
   return (

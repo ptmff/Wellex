@@ -88,7 +88,10 @@ export type PortfolioBalanceTx = {
     | "trade_credit"
     | "fee"
     | "adjustment"
-    | "refund";
+    | "refund"
+    | "purchase"
+    | "ad_reward"
+    | "signup_bonus";
   amount: number;
   balanceBefore: number;
   balanceAfter: number;

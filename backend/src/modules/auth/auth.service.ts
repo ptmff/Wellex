@@ -109,17 +109,16 @@ export class AuthService {
         total: config.INITIAL_USER_BALANCE.toFixed(8),
         available_cash: config.INITIAL_USER_BALANCE.toFixed(8),
         reserved_cash: '0',
-        currency: 'USD',
+        currency: config.CURRENCY_CODE,
       });
 
-      // Deposit transaction log
       await trx('balance_transactions').insert({
         user_id: newUser.id,
-        type: 'deposit',
+        type: 'signup_bonus',
         amount: config.INITIAL_USER_BALANCE.toFixed(8),
         balance_before: '0',
         balance_after: config.INITIAL_USER_BALANCE.toFixed(8),
-        description: 'Initial demo balance',
+        description: `Welcome bonus ${config.INITIAL_USER_BALANCE} ${config.CURRENCY_CODE}`,
       });
 
       return newUser;
