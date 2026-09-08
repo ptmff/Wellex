@@ -2,6 +2,13 @@ import { db } from '../connection';
 import { logger } from '../../common/logger';
 import type { Knex } from 'knex';
 
+async function createTableIfMissing(name: string, builder: (t: any) => void): Promise<void> {
+  const exists = await db.schema.hasTable(name);
+  if (!exists) {
+    await db.schema.createTable(name, builder);
+  }
+}
+
 export async function runMigrations(): Promise<void> {
   logger.info('Running database migrations...');
   const createTableIfMissing = async (
@@ -73,15 +80,15 @@ export async function runMigrations(): Promise<void> {
     t.decimal('available', 20, 8).notNullable().defaultTo(0);
     t.decimal('reserved', 20, 8).notNullable().defaultTo(0); // locked in open orders
     t.decimal('total', 20, 8).notNullable().defaultTo(0);    // available + reserved
+    t.decimal('available_cash', 20, 8);
+    t.decimal('reserved_cash', 20, 8);
     t.string('currency', 10).notNullable().defaultTo('WX');
     t.integer('version').notNullable().defaultTo(0); // optimistic locking
     t.timestamps(true, true);
     t.index(['user_id']);
   });
 
-  // ─────────────────────────────────────────────────────────────────
-  // CASH RESERVES (new columns; reserved shares are tracked in positions)
-  // ─────────────────────────────────────────────────────────────────
+  // Backfill for rows created before available_cash/reserved_cash columns existed
   await db.schema.raw(`
     ALTER TABLE balances
     ADD COLUMN IF NOT EXISTS available_cash decimal(20, 8);
@@ -90,11 +97,10 @@ export async function runMigrations(): Promise<void> {
     ALTER TABLE balances
     ADD COLUMN IF NOT EXISTS reserved_cash decimal(20, 8);
   `);
-  // Backfill for existing rows (best-effort)
   await db.schema.raw(`
     UPDATE balances
     SET available_cash = COALESCE(available_cash, available),
-        reserved_cash = COALESCE(reserved_cash, reserved);
+        reserved_cash  = COALESCE(reserved_cash,  reserved);
   `);
 
   // ─────────────────────────────────────────────────────────────────
@@ -118,7 +124,7 @@ export async function runMigrations(): Promise<void> {
     t.decimal('amount', 20, 8).notNullable();
     t.decimal('balance_before', 20, 8).notNullable();
     t.decimal('balance_after', 20, 8).notNullable();
-    t.string('reference_type', 50); // 'trade', 'order', 'market_resolution'
+    t.string('reference_type', 50);
     t.uuid('reference_id');
     t.text('description');
     t.jsonb('metadata').notNullable().defaultTo('{}');
@@ -155,7 +161,7 @@ export async function runMigrations(): Promise<void> {
       .notNullable().defaultTo('pending');
     t.enum('outcome', ['yes', 'no', 'invalid']).nullable();
     t.decimal('initial_liquidity', 20, 8).notNullable().defaultTo(0);
-    t.decimal('liquidity_b', 20, 8).notNullable(); // LMSR b parameter
+    t.decimal('liquidity_b', 20, 8).notNullable();
     t.decimal('yes_shares', 20, 8).notNullable().defaultTo(0);
     t.decimal('no_shares', 20, 8).notNullable().defaultTo(0);
     t.decimal('current_yes_price', 10, 8).notNullable().defaultTo(0.5);
@@ -186,9 +192,8 @@ export async function runMigrations(): Promise<void> {
     t.index(['current_yes_price']);
   });
 
-  // Full-text search index
   await db.raw(`
-    CREATE INDEX IF NOT EXISTS markets_fts_idx 
+    CREATE INDEX IF NOT EXISTS markets_fts_idx
     ON markets USING gin(to_tsvector('english', title || ' ' || description))
   `);
 
@@ -204,12 +209,12 @@ export async function runMigrations(): Promise<void> {
     t.enum('action', ['buy', 'sell']).notNullable();
     t.enum('status', ['pending', 'open', 'partially_filled', 'filled', 'cancelled', 'expired', 'rejected'])
       .notNullable().defaultTo('pending');
-    t.decimal('price', 10, 8); // null for market orders
+    t.decimal('price', 10, 8);
     t.decimal('quantity', 20, 8).notNullable();
     t.decimal('filled_quantity', 20, 8).notNullable().defaultTo(0);
     t.decimal('remaining_quantity', 20, 8).notNullable();
     t.decimal('average_fill_price', 10, 8);
-    t.decimal('total_cost', 20, 8); // reserved from balance
+    t.decimal('total_cost', 20, 8);
     t.decimal('fee_amount', 20, 8).notNullable().defaultTo(0);
     t.timestamp('expires_at');
     t.text('cancel_reason');
@@ -221,12 +226,12 @@ export async function runMigrations(): Promise<void> {
     t.index(['side']);
     t.index(['type']);
     t.index(['created_at']);
-    t.index(['market_id', 'side', 'price', 'status']); // order book query
+    t.index(['market_id', 'side', 'price', 'status']);
     t.index(['user_id', 'status']);
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // TRADES (executed transactions)
+  // TRADES
   // ─────────────────────────────────────────────────────────────────
   await createTableIfMissing('trades', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
@@ -263,10 +268,8 @@ export async function runMigrations(): Promise<void> {
     t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('RESTRICT');
     t.enum('side', ['yes', 'no']).notNullable();
     t.decimal('quantity', 20, 8).notNullable().defaultTo(0);
-    // Shares locked by open LIMIT SELL orders.
-    // Invariant: available_shares + reserved_quantity = quantity
     t.decimal('reserved_quantity', 20, 8).notNullable().defaultTo(0);
-    t.decimal('average_price', 10, 8).notNullable().defaultTo(0); // WAP
+    t.decimal('average_price', 10, 8).notNullable().defaultTo(0);
     t.decimal('total_invested', 20, 8).notNullable().defaultTo(0);
     t.decimal('realized_pnl', 20, 8).notNullable().defaultTo(0);
     t.decimal('unrealized_pnl', 20, 8).notNullable().defaultTo(0);
@@ -280,14 +283,13 @@ export async function runMigrations(): Promise<void> {
     t.index(['user_id', 'market_id']);
   });
 
-  // Backfill reserved_quantity for existing rows (best-effort)
   await db.schema.raw(`
     ALTER TABLE positions
     ADD COLUMN IF NOT EXISTS reserved_quantity decimal(20, 8) NOT NULL DEFAULT 0;
   `);
 
   // ─────────────────────────────────────────────────────────────────
-  // PRICE HISTORY (time-series)
+  // PRICE HISTORY
   // ─────────────────────────────────────────────────────────────────
   await createTableIfMissing('price_history', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
@@ -360,7 +362,7 @@ export async function runMigrations(): Promise<void> {
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // MARKET REPORTS (admin moderation)
+  // MARKET REPORTS
   // ─────────────────────────────────────────────────────────────────
   await createTableIfMissing('market_reports', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
