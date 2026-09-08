@@ -22,6 +22,10 @@ services:
       - INITIAL_USER_BALANCE=1000
       - SEED_ON_START=true
       - INGEST_ON_START=true
+      - PAYMENT_PROVIDER=mock
+      - PAYMENT_RETURN_URL=http://localhost:8080/shop
+      # Real checkout: PAYMENT_PROVIDER=yookassa + YOOKASSA_SHOP_ID + YOOKASSA_SECRET_KEY
+      # HTTP notifications: http://<public-host>/api/v1/economy/webhooks/yookassa
     depends_on:
       postgres:
         condition: service_healthy

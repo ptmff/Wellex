@@ -26,6 +26,8 @@ lerna-debug.log*
 **/.env.local
 **/.env.production
 **/.env.test
+!.env.example
+!**/.env.example
 
 # Editor / IDE
 .vscode/

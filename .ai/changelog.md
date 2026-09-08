@@ -11,6 +11,7 @@
 |-----------|---------|
 | Добавлены Cursor rules (`.cursor/rules/`) + `AGENTS.md` + память `.ai/` | Агенты планируют до кода и держат архитектурную память |
 | Игровая валюта WX, магазин, реклама, ingest Polymarket, MM-боты | Торговля не в USD; каталог с Gamma API; create только moderator+ |
+| ЮKassa для пакетов WX (`PaymentProvider`) | Redirect checkout; кредит по webhook / sync; mock без ключей |
 
 ---
 

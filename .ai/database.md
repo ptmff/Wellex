@@ -29,7 +29,7 @@
 | `balances` | available/reserved/total + cash-колонки, `currency` default **WX**, `version` |
 | `balance_transactions` | Леджер: deposit, trade_*, fee, **purchase**, **ad_reward**, **signup_bonus**, … |
 | `coin_packages` | Пакеты WX для магазина |
-| `coin_purchases` | Покупки (provider=`mock`, статус pending/succeeded/failed) |
+| `coin_purchases` | Покупки WX (`provider` mock\|yookassa, unique `provider_ref`, pending/succeeded/failed) |
 | `ad_rewards` | Выдачи за рекламу (кулдаун считается по этой таблице) |
 | `market_categories` | Категории (slug unique) |
 | `markets` | Рынок + **`external_source`/`external_id`** (уник. для Polymarket) |

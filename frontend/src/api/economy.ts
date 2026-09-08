@@ -14,6 +14,7 @@ export type EconomyStatus = {
   available: number;
   reserved: number;
   total: number;
+  paymentProvider: "mock" | "yookassa" | string;
   ad: {
     canWatch: boolean;
     adsToday: number;
@@ -29,7 +30,8 @@ export type PurchaseResult = {
   wxAmount: number;
   currency: string;
   provider: string;
-  status: string;
+  status: "pending" | "succeeded" | "failed" | string;
+  confirmationUrl?: string | null;
 };
 
 export type AdRewardResult = {
@@ -51,6 +53,13 @@ export async function purchasePackage(request: AuthRequest, packageSlug: string)
   return request<PurchaseResult>("/economy/purchase", {
     method: "POST",
     body: { packageSlug },
+    authRequired: true,
+  });
+}
+
+export async function getPurchase(request: AuthRequest, purchaseId: string) {
+  return request<PurchaseResult>(`/economy/purchases/${purchaseId}`, {
+    method: "GET",
     authRequired: true,
   });
 }

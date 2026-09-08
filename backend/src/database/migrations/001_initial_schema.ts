@@ -441,6 +441,12 @@ export async function runMigrations(): Promise<void> {
     t.index(['provider_ref']);
   });
 
+  await db.schema.raw(`
+    CREATE UNIQUE INDEX IF NOT EXISTS coin_purchases_provider_ref_uidx
+    ON coin_purchases (provider_ref)
+    WHERE provider_ref IS NOT NULL;
+  `);
+
   await createTableIfMissing('ad_rewards', (t) => {
     t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
     t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');

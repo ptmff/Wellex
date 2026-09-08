@@ -75,8 +75,9 @@ Wellex/
 1. **Auth** — register/login → JWT pair в `session.ts` → Bearer на API; refresh с ротацией.
 2. **Create market** — `POST /markets` (**moderator/admin**) → active; бот ingest создаёт рынки из Polymarket.
 3. **Trade** — quote → market trade или LIMIT в **WX**; транзакция Postgres → `trades` + `price_history` → WS.
-4. **Charts** — cron/BullMQ агрегирует `price_candles`; fallback на raw `price_history`.
-5. **Resolve** — admin/moderator `POST /admin/markets/:id/resolve` → outcome, расчёт позиций.
+4. **Shop** — `POST /economy/purchase` → ЮKassa confirmation URL (или mock credit) → webhook / GET sync → кредит WX.
+5. **Charts** — cron/BullMQ агрегирует `price_candles`; fallback на raw `price_history`.
+6. **Resolve** — admin/moderator `POST /admin/markets/:id/resolve` → outcome, расчёт позиций.
 
 ## Frontend routing
 

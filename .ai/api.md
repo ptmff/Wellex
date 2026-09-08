@@ -75,8 +75,10 @@ Body trade: `{ side: yes\|no, action: buy\|sell, amount, maxSlippage?, expectedP
 | Method | Route | Auth | Описание |
 |--------|-------|------|----------|
 | GET | `/packages` | нет | Пакеты WX |
-| GET | `/me` | да | Баланс + доступность рекламы |
-| POST | `/purchase` | да | `{ packageSlug }` mock-оплата → кредит WX |
+| GET | `/me` | да | Баланс + `paymentProvider` + доступность рекламы |
+| POST | `/purchase` | да | `{ packageSlug }` → mock: кредит сразу; ЮKassa: `{ status: pending, confirmationUrl }` |
+| GET | `/purchases/:id` | да | Статус своей покупки (для ЮKassa синхронизирует с API) |
+| POST | `/webhooks/yookassa` | нет | HTTP-уведомления ЮKassa; кредит WX идемпотентно |
 | POST | `/ad-reward` | да | Награда за рекламу (кулдаун / дневной лимит) |
 
 ## Portfolio — `/api/v1/portfolio` (auth)

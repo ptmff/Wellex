@@ -1,15 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Coins, Play } from "lucide-react";
+import { Link, useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/auth/AuthContext";
 import { useI18n } from "@/i18n/I18nContext";
-import { claimAdReward, getEconomyStatus, listPackages, purchasePackage } from "@/api/economy";
+import {
+  claimAdReward,
+  getEconomyStatus,
+  getPurchase,
+  listPackages,
+  purchasePackage,
+} from "@/api/economy";
 import { formatWx } from "@/lib/money";
 import { toast } from "sonner";
-import { Link } from "react-router-dom";
 
 const AD_SECONDS = 15;
 
@@ -17,8 +23,12 @@ export default function Shop() {
   const { request, user } = useAuth();
   const { language } = useI18n();
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [watching, setWatching] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState(AD_SECONDS);
+  const returnToastRef = useRef(false);
+
+  const pendingPurchaseId = searchParams.get("purchase");
 
   const packagesQuery = useQuery({
     queryKey: ["economy-packages"],
@@ -32,6 +42,17 @@ export default function Shop() {
     enabled: !!request && !!user,
   });
 
+  const returnPurchaseQuery = useQuery({
+    queryKey: ["economy-purchase", pendingPurchaseId],
+    queryFn: () => getPurchase(request, pendingPurchaseId!),
+    enabled: !!request && !!user && !!pendingPurchaseId,
+    refetchInterval: (query) => {
+      const status = query.state.data?.status;
+      if (status === "succeeded" || status === "failed") return false;
+      return 2000;
+    },
+  });
+
   useEffect(() => {
     if (!watching) return;
     if (secondsLeft <= 0) return;
@@ -39,9 +60,36 @@ export default function Shop() {
     return () => window.clearTimeout(t);
   }, [watching, secondsLeft]);
 
+  useEffect(() => {
+    const result = returnPurchaseQuery.data;
+    if (!result || returnToastRef.current) return;
+    if (result.status === "succeeded") {
+      returnToastRef.current = true;
+      toast.success(
+        language === "ru"
+          ? `Зачислено ${formatWx(result.wxAmount)}`
+          : `Credited ${formatWx(result.wxAmount)}`,
+      );
+      void queryClient.invalidateQueries({ queryKey: ["economy-me"] });
+      void queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      void queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      setSearchParams({}, { replace: true });
+      return;
+    }
+    if (result.status === "failed") {
+      returnToastRef.current = true;
+      toast.error(language === "ru" ? "Оплата не прошла" : "Payment failed");
+      setSearchParams({}, { replace: true });
+    }
+  }, [language, queryClient, returnPurchaseQuery.data, setSearchParams]);
+
   const buyMutation = useMutation({
     mutationFn: (slug: string) => purchasePackage(request, slug),
     onSuccess: async (result) => {
+      if (result.confirmationUrl) {
+        window.location.assign(result.confirmationUrl);
+        return;
+      }
       toast.success(
         language === "ru"
           ? `Зачислено ${formatWx(result.wxAmount)}`
@@ -88,7 +136,9 @@ export default function Shop() {
   });
 
   const status = statusQuery.data;
+  const isYooKassa = status?.paymentProvider === "yookassa";
   const canStartAd = !!user && !!status?.ad.canWatch && !watching && !adMutation.isPending;
+  const waitingReturn = !!pendingPurchaseId && returnPurchaseQuery.data?.status === "pending";
 
   const finishAd = () => {
     if (secondsLeft > 0) return;
@@ -104,6 +154,14 @@ export default function Shop() {
             ? "Игровая валюта для стакана. Стартовый бонус выдаётся один раз. Если баланс кончился — докупите WX или посмотрите рекламу."
             : "In-game currency for the order book. The welcome bonus is granted once. If you run out, buy WX or watch an ad."}
         </p>
+
+        {waitingReturn ? (
+          <div className="rounded-xl border border-border/50 bg-card p-4 mb-6 text-sm">
+            {language === "ru"
+              ? "Проверяем оплату в ЮKassa…"
+              : "Checking YooKassa payment…"}
+          </div>
+        ) : null}
 
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
           <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Доступно" : "Available"}</div>
@@ -122,7 +180,13 @@ export default function Shop() {
               </div>
               <div className="text-xl font-bold mb-1">{formatWx(pack.wxAmount, { digits: 0 })}</div>
               <div className="text-xs text-muted-foreground mb-4">
-                {language === "ru" ? `Макет оплаты · ${pack.priceRub} ₽` : `Mock payment · ${pack.priceRub} ₽`}
+                {isYooKassa
+                  ? language === "ru"
+                    ? `ЮKassa · ${pack.priceRub} ₽`
+                    : `YooKassa · ${pack.priceRub} ₽`
+                  : language === "ru"
+                    ? `Макет оплаты · ${pack.priceRub} ₽`
+                    : `Mock payment · ${pack.priceRub} ₽`}
               </div>
               <Button
                 className="mt-auto"

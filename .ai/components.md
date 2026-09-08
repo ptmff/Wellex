@@ -23,7 +23,8 @@
 | `WebSocketService` | `infrastructure/websocket/ws.service.ts` | Подписки, Redis pub/sub |
 | `CacheService` | `infrastructure/redis/cache.service.ts` | Кэш рынков/юзеров/стакана |
 | BullMQ queues | `infrastructure/queue/queues.ts` | trade-processing, analytics, maintenance |
-| `EconomyService` | `modules/economy/` | пакеты WX, mock purchase, ad-reward |
+| `EconomyService` | `modules/economy/` | пакеты WX, purchase (ЮKassa/mock), webhook, ad-reward |
+| `PaymentProvider` | `modules/economy/payment.provider.ts` | порт: mock или `YooKassaPaymentProvider` |
 | `IngestService` | `modules/ingest/` | Polymarket Gamma → рынки Wellex |
 | `MarketMakerService` | `modules/bots/` | LIMIT-лестница ботов |
 | scheduler | `infrastructure/jobs/scheduler.ts` | Cron свечей, expiry, **daily ingest** |

@@ -94,7 +94,7 @@ Stateless API и отзыв сессий.
 
 **Статус:** Accepted
 
-Торговля только в WX. Регистрация даёт 1000 WX один раз. Пополнение: mock-магазин (`PaymentProvider`) и mock-реклама с серверным кулдауном. Реальный PSP и ad network подключаются заменой провайдера, без смены order book.
+Торговля только в WX. Регистрация даёт 1000 WX один раз. Пополнение: магазин (`PaymentProvider`) и mock-реклама с серверным кулдауном. Order book не знает про PSP.
 
 ---
 
@@ -103,3 +103,11 @@ Stateless API и отзыв сессий.
 **Статус:** Accepted
 
 HTML polymarket.com не парсим. Источник — публичный Gamma API, cron раз в сутки, дедуп `external_source+external_id`. Создание рынков людьми — **moderator/admin**. Три MM-бота сидят стакан вокруг implied-цены; без них импортированные рынки пустые.
+
+---
+
+## ADR-008: ЮKassa для покупки WX
+
+**Статус:** Accepted
+
+Провайдер выбирается env `PAYMENT_PROVIDER=mock|yookassa`. Mock кредитует сразу (локалка). ЮKassa: `POST /v3/payments` + redirect, кредит только после `payment.succeeded` (webhook или GET sync по `provider_ref`). Сумма сверяется с `coin_purchases.price_rub`. Order book не меняется.

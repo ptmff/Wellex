@@ -204,6 +204,7 @@ async function bootstrap(): Promise<void> {
     logger.info(`🚀 Server running on port ${config.PORT}`, {
       env: config.NODE_ENV,
       apiBase: apiV1,
+      paymentProvider: config.PAYMENT_PROVIDER,
     });
   });
 

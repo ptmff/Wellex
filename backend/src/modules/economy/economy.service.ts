@@ -1,8 +1,9 @@
 import { z } from 'zod';
 import Decimal from 'decimal.js';
+import type { Knex } from 'knex';
 import { db } from '../../database/connection';
 import { config } from '../../config';
-import { AppError, ErrorCode, NotFoundError } from '../../common/errors';
+import { AppError, ErrorCode, ForbiddenError, NotFoundError } from '../../common/errors';
 import { logger } from '../../common/logger';
 import { creditWx } from './wallet';
 import { paymentProvider } from './payment.provider';
@@ -12,11 +13,35 @@ export const PurchaseDto = z.object({
   packageSlug: z.string().min(1).max(50),
 });
 
+export const YooKassaWebhookDto = z.object({
+  type: z.string().optional(),
+  event: z.string().min(1),
+  object: z.object({
+    id: z.string().min(1),
+    status: z.string().optional(),
+    metadata: z.record(z.union([z.string(), z.number(), z.boolean()])).optional(),
+  }),
+});
+
 const DEFAULT_PACKAGES = [
   { slug: 'starter', name: 'Starter', wx_amount: '500', price_rub: '49.00', sort_order: 1 },
   { slug: 'pack', name: 'Pack', wx_amount: '2000', price_rub: '149.00', sort_order: 2 },
   { slug: 'whale', name: 'Whale', wx_amount: '5000', price_rub: '299.00', sort_order: 3 },
 ];
+
+type PurchaseRow = {
+  id: string;
+  user_id: string;
+  package_id: string;
+  wx_amount: string;
+  price_rub: string;
+  provider: string;
+  provider_ref: string | null;
+  status: string;
+  metadata: unknown;
+  created_at: Date;
+  completed_at: Date | null;
+};
 
 export class EconomyService {
   async ensurePackages(): Promise<void> {
@@ -47,6 +72,7 @@ export class EconomyService {
           )
         )
       ),
+      paymentProvider: paymentProvider.name,
       ad,
     };
   }
@@ -58,67 +84,240 @@ export class EconomyService {
     const pack = await db('coin_packages').where({ slug: packageSlug, is_active: true }).first();
     if (!pack) throw new NotFoundError('Package', packageSlug);
 
-    const purchase = await db.transaction(async (trx) => {
-      const [row] = await trx('coin_purchases')
-        .insert({
-          user_id: userId,
-          package_id: pack.id,
-          wx_amount: pack.wx_amount,
-          price_rub: pack.price_rub,
-          provider: paymentProvider.name,
-          status: 'pending',
-          metadata: JSON.stringify({ packageSlug }),
-        })
-        .returning('*');
+    const user = await db('users').select('id', 'email').where('id', userId).first();
+    if (!user) throw new NotFoundError('User', userId);
 
+    const [row] = await db('coin_purchases')
+      .insert({
+        user_id: userId,
+        package_id: pack.id,
+        wx_amount: pack.wx_amount,
+        price_rub: pack.price_rub,
+        provider: paymentProvider.name,
+        status: 'pending',
+        metadata: JSON.stringify({ packageSlug }),
+      })
+      .returning('*');
+
+    try {
       const charge = await paymentProvider.createCharge({
         userId,
         purchaseId: row.id,
         packageSlug,
+        packageName: pack.name,
         wxAmount: parseFloat(pack.wx_amount),
         priceRub: parseFloat(pack.price_rub),
+        customerEmail: user.email,
       });
 
-      if (charge.status !== 'succeeded') {
-        await trx('coin_purchases').where('id', row.id).update({
-          status: charge.status === 'failed' ? 'failed' : 'pending',
-          provider_ref: charge.providerRef,
-        });
-        throw new AppError(
-          ErrorCode.INTERNAL_ERROR,
-          'Payment is pending or failed; retry later or wait for webhook',
-          402
-        );
+      await db('coin_purchases').where('id', row.id).update({
+        provider_ref: charge.providerRef,
+        status: charge.status === 'failed' ? 'failed' : 'pending',
+        metadata: JSON.stringify({
+          packageSlug,
+          confirmationUrl: charge.confirmationUrl ?? null,
+        }),
+      });
+
+      if (charge.status === 'failed') {
+        throw new AppError(ErrorCode.INTERNAL_ERROR, 'Payment failed', 402);
       }
 
-      await creditWx(trx, userId, pack.wx_amount, 'purchase', `Purchased ${pack.wx_amount} ${config.CURRENCY_CODE}`, {
-        referenceType: 'coin_purchase',
-        referenceId: row.id,
-        metadata: { packageSlug, provider: charge.provider },
+      if (charge.status === 'succeeded') {
+        await this.fulfillPurchase(row.id, charge.providerRef);
+        const succeeded = await db('coin_purchases').where('id', row.id).first();
+        return this.formatPurchase(succeeded as PurchaseRow, charge.confirmationUrl);
+      }
+
+      logger.info('WX purchase pending payment', {
+        userId,
+        packageSlug,
+        purchaseId: row.id,
+        provider: paymentProvider.name,
       });
+
+      return {
+        purchaseId: row.id,
+        wxAmount: parseFloat(pack.wx_amount),
+        currency: config.CURRENCY_CODE,
+        provider: paymentProvider.name,
+        status: 'pending' as const,
+        confirmationUrl: charge.confirmationUrl ?? null,
+      };
+    } catch (err) {
+      const current = await db('coin_purchases').where('id', row.id).first();
+      if (current?.status !== 'succeeded') {
+        await db('coin_purchases').where('id', row.id).update({
+          status: 'failed',
+          completed_at: new Date(),
+        });
+      }
+      throw err;
+    }
+  }
+
+  async getPurchase(userId: string, purchaseId: string) {
+    const row = await db('coin_purchases').where({ id: purchaseId }).first();
+    if (!row) throw new NotFoundError('Purchase', purchaseId);
+    if (row.user_id !== userId) throw new ForbiddenError('Purchase does not belong to this user');
+
+    if (row.status === 'pending' && row.provider_ref && paymentProvider.name !== 'mock') {
+      await this.syncFromProvider(row as PurchaseRow);
+      const fresh = await db('coin_purchases').where('id', purchaseId).first();
+      return this.formatPurchase(fresh as PurchaseRow);
+    }
+
+    return this.formatPurchase(row as PurchaseRow);
+  }
+
+  async handleYooKassaWebhook(body: unknown) {
+    if (paymentProvider.name !== 'yookassa') {
+      logger.warn('YooKassa webhook ignored: PAYMENT_PROVIDER is not yookassa');
+      return { ignored: true as const };
+    }
+
+    const payload = YooKassaWebhookDto.parse(body);
+    const lookup = await paymentProvider.getPayment(payload.object.id);
+    const webhookPurchaseId = payload.object.metadata?.purchaseId;
+    const purchaseId =
+      lookup.metadata.purchaseId ?? (webhookPurchaseId != null ? String(webhookPurchaseId) : undefined);
+
+    let purchase: PurchaseRow | undefined;
+    if (purchaseId) {
+      purchase = (await db('coin_purchases').where('id', purchaseId).first()) as PurchaseRow | undefined;
+    }
+    if (!purchase) {
+      purchase = (await db('coin_purchases').where('provider_ref', lookup.providerRef).first()) as
+        | PurchaseRow
+        | undefined;
+    }
+
+    if (!purchase) {
+      logger.warn('YooKassa webhook for unknown purchase', {
+        providerRef: lookup.providerRef,
+        purchaseId,
+        event: payload.event,
+      });
+      return { ignored: true };
+    }
+
+    if (lookup.status === 'succeeded' && lookup.paid) {
+      try {
+        this.assertAmountMatches(purchase, lookup.amountValue);
+      } catch (err) {
+        logger.error('YooKassa amount mismatch', {
+          purchaseId: purchase.id,
+          error: (err as Error).message,
+        });
+        await this.markFailed(purchase.id, lookup.providerRef);
+        return { purchaseId: purchase.id, status: 'failed' };
+      }
+      await this.fulfillPurchase(purchase.id, lookup.providerRef);
+      return { purchaseId: purchase.id, status: 'succeeded' };
+    }
+
+    if (lookup.status === 'canceled' || lookup.status === 'failed') {
+      await this.markFailed(purchase.id, lookup.providerRef);
+      return { purchaseId: purchase.id, status: 'failed' };
+    }
+
+    return { purchaseId: purchase.id, status: purchase.status };
+  }
+
+  private async syncFromProvider(row: PurchaseRow): Promise<void> {
+    if (!row.provider_ref) return;
+    try {
+      const lookup = await paymentProvider.getPayment(row.provider_ref);
+      if (lookup.status === 'succeeded' && lookup.paid) {
+        try {
+          this.assertAmountMatches(row, lookup.amountValue);
+        } catch (err) {
+          logger.error('Payment amount mismatch on sync', {
+            purchaseId: row.id,
+            error: (err as Error).message,
+          });
+          await this.markFailed(row.id, lookup.providerRef);
+          return;
+        }
+        await this.fulfillPurchase(row.id, lookup.providerRef);
+        return;
+      }
+      if (lookup.status === 'canceled' || lookup.status === 'failed') {
+        await this.markFailed(row.id, lookup.providerRef);
+      }
+    } catch (err) {
+      logger.warn('Payment status sync failed', {
+        purchaseId: row.id,
+        error: (err as Error).message,
+      });
+    }
+  }
+
+  private assertAmountMatches(purchase: PurchaseRow, amountValue: string): void {
+    const expected = new Decimal(purchase.price_rub).toFixed(2);
+    const got = new Decimal(amountValue || 0).toFixed(2);
+    if (expected !== got) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Payment amount does not match package price', 400, {
+        expected,
+        got,
+      });
+    }
+  }
+
+  private async fulfillPurchase(purchaseId: string, providerRef: string): Promise<PurchaseRow> {
+    const result = await db.transaction(async (trx) => {
+      const row = (await trx('coin_purchases').where('id', purchaseId).forUpdate().first()) as PurchaseRow | undefined;
+      if (!row) throw new NotFoundError('Purchase', purchaseId);
+      if (row.status === 'succeeded') return { already: true, row };
+
+      const packMeta = this.readMetadata(row.metadata);
+      await creditWx(
+        trx,
+        row.user_id,
+        row.wx_amount,
+        'purchase',
+        `Purchased ${row.wx_amount} ${config.CURRENCY_CODE}`,
+        {
+          referenceType: 'coin_purchase',
+          referenceId: row.id,
+          metadata: { packageSlug: packMeta.packageSlug, provider: row.provider },
+        }
+      );
 
       const [updated] = await trx('coin_purchases')
         .where('id', row.id)
         .update({
           status: 'succeeded',
-          provider_ref: charge.providerRef,
+          provider_ref: providerRef || row.provider_ref,
           completed_at: new Date(),
         })
         .returning('*');
 
-      return updated;
+      return { already: false, row: updated as PurchaseRow };
     });
 
-    await portfolioCache.del(`portfolio:${userId}`);
-    logger.info('WX purchased', { userId, packageSlug, purchaseId: purchase.id });
+    if (!result.already) {
+      await portfolioCache.del(`portfolio:${result.row.user_id}`);
+      logger.info('WX purchased', {
+        userId: result.row.user_id,
+        purchaseId: result.row.id,
+        provider: result.row.provider,
+      });
+    }
 
-    return {
-      purchaseId: purchase.id,
-      wxAmount: parseFloat(purchase.wx_amount),
-      currency: config.CURRENCY_CODE,
-      provider: purchase.provider,
-      status: purchase.status,
-    };
+    return result.row;
+  }
+
+  private async markFailed(purchaseId: string, providerRef: string): Promise<void> {
+    await db.transaction(async (trx: Knex.Transaction) => {
+      const row = await trx('coin_purchases').where('id', purchaseId).forUpdate().first();
+      if (!row || row.status === 'succeeded') return;
+      await trx('coin_purchases').where('id', purchaseId).update({
+        status: 'failed',
+        provider_ref: providerRef || row.provider_ref,
+        completed_at: new Date(),
+      });
+    });
   }
 
   async claimAdReward(userId: string) {
@@ -227,5 +426,31 @@ export class EconomyService {
       priceRub: parseFloat(p.price_rub),
       currency: config.CURRENCY_CODE,
     };
+  }
+
+  private formatPurchase(row: PurchaseRow, confirmationUrl?: string | null) {
+    const meta = this.readMetadata(row.metadata);
+    return {
+      purchaseId: row.id,
+      wxAmount: parseFloat(row.wx_amount),
+      currency: config.CURRENCY_CODE,
+      provider: row.provider,
+      status: row.status,
+      confirmationUrl: confirmationUrl ?? (typeof meta.confirmationUrl === 'string' ? meta.confirmationUrl : null),
+    };
+  }
+
+  private readMetadata(value: unknown): Record<string, unknown> {
+    if (!value) return {};
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+      } catch {
+        return {};
+      }
+    }
+    if (typeof value === 'object') return value as Record<string, unknown>;
+    return {};
   }
 }

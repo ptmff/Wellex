@@ -3,7 +3,7 @@ import { z } from 'zod';
 
 dotenv.config();
 
-const configSchema = z.object({
+const rawConfigSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
@@ -42,11 +42,21 @@ const configSchema = z.object({
   SEED_ON_START: z.enum(['true', 'false']).default('false').transform((v: string) => v === 'true'),
   INGEST_ON_START: z.enum(['true', 'false']).default('false').transform((v: string) => v === 'true'),
 
-  // Economy (ads + mock shop; real PSP/ads later)
+  // Economy (ads + shop; YooKassa when PAYMENT_PROVIDER=yookassa)
   AD_REWARD_AMOUNT: z.coerce.number().default(100),
   AD_REWARD_COOLDOWN_HOURS: z.coerce.number().default(4),
   AD_REWARD_MAX_PER_DAY: z.coerce.number().default(4),
   BOT_USER_BALANCE: z.coerce.number().default(1_000_000),
+  PAYMENT_PROVIDER: z.enum(['mock', 'yookassa']).default('mock'),
+  YOOKASSA_SHOP_ID: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional()
+  ),
+  YOOKASSA_SECRET_KEY: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional()
+  ),
+  PAYMENT_RETURN_URL: z.string().url().default('http://localhost:8080/shop'),
 
   // Polymarket ingest (Gamma API, read-only)
   POLYMARKET_GAMMA_URL: z.string().url().default('https://gamma-api.polymarket.com'),
@@ -66,6 +76,24 @@ const configSchema = z.object({
   // Logging
   LOG_LEVEL: z.enum(['error', 'warn', 'info', 'debug']).default('info'),
   LOG_DIR: z.string().default('./logs'),
+});
+
+const configSchema = rawConfigSchema.superRefine((data, ctx) => {
+  if (data.PAYMENT_PROVIDER !== 'yookassa') return;
+  if (!data.YOOKASSA_SHOP_ID) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'YOOKASSA_SHOP_ID is required when PAYMENT_PROVIDER=yookassa',
+      path: ['YOOKASSA_SHOP_ID'],
+    });
+  }
+  if (!data.YOOKASSA_SECRET_KEY) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'YOOKASSA_SECRET_KEY is required when PAYMENT_PROVIDER=yookassa',
+      path: ['YOOKASSA_SECRET_KEY'],
+    });
+  }
 });
 
 const parseResult = configSchema.safeParse(process.env);

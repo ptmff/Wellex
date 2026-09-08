@@ -49,8 +49,18 @@ GET /portfolio
 GET /portfolio/positions
 GET /portfolio/trades
 GET /portfolio/pnl
-POST /economy/purchase | POST /economy/ad-reward
+POST /economy/ad-reward
 WS subscribe_portfolio
+```
+
+### 5b. Покупка WX
+
+```
+1. POST /economy/purchase { packageSlug }
+2. mock → сразу creditWx; yookassa → confirmationUrl, редирект на кассу
+3. ЮKassa HTTP-уведомление POST /economy/webhooks/yookassa
+   (локально без туннеля: GET /economy/purchases/:id сам спрашивает API ЮKassa)
+4. Идемпотентный кредит WX, coin_purchases.status = succeeded
 ```
 
 ### 6. Резолюция рынка (admin/moderator)
