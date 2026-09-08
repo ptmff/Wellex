@@ -249,7 +249,7 @@ export async function runMigrations(): Promise<void> {
     t.decimal('fee', 20, 8).notNullable().defaultTo(0);
     t.decimal('yes_price_before', 10, 8).notNullable();
     t.decimal('yes_price_after', 10, 8).notNullable();
-    t.decimal('price_impact', 10, 8).notNullable().defaultTo(0);
+    t.decimal('price_impact', 20, 8).notNullable().defaultTo(0);
     t.timestamp('executed_at').notNullable().defaultTo(db.fn.now());
     t.jsonb('metadata').notNullable().defaultTo('{}');
     t.index(['market_id']);
@@ -259,6 +259,11 @@ export async function runMigrations(): Promise<void> {
     t.index(['market_id', 'executed_at']);
     t.index(['side']);
   });
+
+  await db.schema.raw(`
+    ALTER TABLE trades
+    ALTER COLUMN price_impact TYPE numeric(20, 8);
+  `);
 
   // ─────────────────────────────────────────────────────────────────
   // POSITIONS

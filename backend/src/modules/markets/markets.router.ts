@@ -17,7 +17,6 @@ router.get('/categories', async (_req: Request, res: Response) => {
   res.json({ success: true, data: categories });
 });
 
-// GET /api/v1/markets/:id
 router.get('/:id/comments', async (req: Request, res: Response) => {
   const page = Math.max(1, parseInt(String(req.query.page ?? 1), 10) || 1);
   const data = await marketsService.listComments(req.params.id, page);
@@ -32,6 +31,12 @@ router.post('/:id/comments', authenticate(), async (req: Request, res: Response)
 router.delete('/:id/comments/:commentId', authenticate(), async (req: Request, res: Response) => {
   await marketsService.deleteComment(req.params.commentId, req.user!.id, req.user!.role);
   res.json({ success: true, data: { deleted: true } });
+});
+
+// GET /api/v1/markets/:id
+router.get('/:id', async (req: Request, res: Response) => {
+  const market = await marketsService.findById(req.params.id);
+  res.json({ success: true, data: market });
 });
 
 // POST /api/v1/markets
