@@ -1,7 +1,7 @@
 import Decimal from 'decimal.js';
 import { db } from '../../database/connection';
-import { config } from '../../config';
 import { logger } from '../../common/logger';
+import { debitWx } from '../economy/wallet';
 import { OrderBookService } from '../orders/orderbook.service';
 
 const BOT_USERNAMES = ['bot_mm_1', 'bot_mm_2', 'bot_mm_3'] as const;
@@ -58,13 +58,67 @@ export class MarketMakerService {
     return placed;
   }
 
+  async requoteMarket(marketId: string, impliedYes: number): Promise<number> {
+    const bots = await db('users').whereIn('username', [...BOT_USERNAMES]).select('id');
+    const botIds = bots.map((b) => b.id);
+    if (botIds.length === 0) return 0;
+
+    const open = await db('orders')
+      .where({ market_id: marketId })
+      .whereIn('user_id', botIds)
+      .whereIn('status', ['open', 'partially_filled', 'pending'])
+      .select('id', 'user_id');
+
+    for (const order of open) {
+      try {
+        await this.orderBookService.cancelOrder(order.user_id, order.id, 'MM requote');
+      } catch (err) {
+        logger.warn('MM requote cancel skipped', { orderId: order.id, error: (err as Error).message });
+      }
+    }
+
+    return this.seedMarket(marketId, impliedYes);
+  }
+
+  /**
+   * Mint YES+NO complete sets for MM bots with full collateral:
+   * each set (1 YES + 1 NO) is paid for with 1 WX from the bot's balance,
+   * and that WX goes into the market collateral pool (liquidity_total),
+   * so resolution payouts are always covered.
+   */
   private async grantInventory(marketId: string, botIds: string[], yesPrice: number, noPrice: number): Promise<void> {
     const inventory = new Decimal(500);
-    for (const userId of botIds) {
-      for (const side of ['yes', 'no'] as const) {
-        const avg = side === 'yes' ? yesPrice : noPrice;
-        await db('positions')
-          .insert({
+
+    await db.transaction(async (trx) => {
+      let mintedSets = new Decimal(0);
+
+      for (const userId of botIds) {
+        const existing = await trx('positions')
+          .where({ user_id: userId, market_id: marketId })
+          .first();
+        if (existing) continue;
+
+        try {
+          await debitWx(
+            trx,
+            userId,
+            inventory,
+            'adjustment',
+            `MM inventory mint: ${inventory.toFixed(0)} YES/NO sets`,
+            { referenceType: 'mm_inventory', referenceId: marketId }
+          );
+        } catch (err) {
+          logger.warn('MM inventory skipped: bot cannot fund collateral', {
+            marketId,
+            botId: userId,
+            error: (err as Error).message,
+          });
+          continue;
+        }
+
+        for (const side of ['yes', 'no'] as const) {
+          const avg = side === 'yes' ? yesPrice : noPrice;
+          await trx('positions').insert({
             user_id: userId,
             market_id: marketId,
             side,
@@ -75,10 +129,22 @@ export class MarketMakerService {
             realized_pnl: '0',
             unrealized_pnl: '0',
             trade_count: 0,
-          })
-          .onConflict(['user_id', 'market_id', 'side'])
-          .ignore();
+          });
+        }
+
+        mintedSets = mintedSets.plus(inventory);
       }
-    }
+
+      if (mintedSets.gt(0)) {
+        await trx('markets')
+          .where('id', marketId)
+          .update({
+            yes_shares: trx.raw('yes_shares + ?', [mintedSets.toFixed(8)]),
+            no_shares: trx.raw('no_shares + ?', [mintedSets.toFixed(8)]),
+            liquidity_total: trx.raw('liquidity_total + ?', [mintedSets.toFixed(8)]),
+            updated_at: new Date(),
+          });
+      }
+    });
   }
 }

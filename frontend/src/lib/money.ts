@@ -30,6 +30,12 @@ export function formatWx(
   return `${sign}${absLabel} ${CURRENCY_CODE}`;
 }
 
+export function formatVolume(v: number): string {
+  if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(1)}M ${CURRENCY_CODE}`;
+  if (v >= 1_000) return `${(v / 1_000).toFixed(0)}K ${CURRENCY_CODE}`;
+  return `${v} ${CURRENCY_CODE}`;
+}
+
 export function isStaffRole(role: string | null | undefined): boolean {
   return role === "moderator" || role === "admin";
 }

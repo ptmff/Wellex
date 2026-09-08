@@ -18,9 +18,20 @@ router.get('/categories', async (_req: Request, res: Response) => {
 });
 
 // GET /api/v1/markets/:id
-router.get('/:id', async (req: Request, res: Response) => {
-  const market = await marketsService.findById(req.params.id);
-  res.json({ success: true, data: market });
+router.get('/:id/comments', async (req: Request, res: Response) => {
+  const page = Math.max(1, parseInt(String(req.query.page ?? 1), 10) || 1);
+  const data = await marketsService.listComments(req.params.id, page);
+  res.json({ success: true, data });
+});
+
+router.post('/:id/comments', authenticate(), async (req: Request, res: Response) => {
+  const comment = await marketsService.addComment(req.params.id, req.user!.id, String(req.body?.body ?? ''));
+  res.status(201).json({ success: true, data: comment });
+});
+
+router.delete('/:id/comments/:commentId', authenticate(), async (req: Request, res: Response) => {
+  await marketsService.deleteComment(req.params.commentId, req.user!.id, req.user!.role);
+  res.json({ success: true, data: { deleted: true } });
 });
 
 // POST /api/v1/markets

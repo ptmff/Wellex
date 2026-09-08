@@ -68,7 +68,7 @@ export class IngestService {
     private readonly orderBookService: OrderBookService
   ) {}
 
-  async runDailySync(): Promise<{ imported: number; skipped: number; resolved: number; ordersPlaced: number }> {
+  async runDailySync(): Promise<{ imported: number; skipped: number; resolved: number; ordersPlaced: number; pricesUpdated?: number }> {
     const ingestUser = await db('users').where('username', 'bot_ingest').first();
     if (!ingestUser) {
       logger.error('bot_ingest user is missing; cannot ingest markets');
@@ -76,10 +76,68 @@ export class IngestService {
     }
 
     const imported = await this.importActiveMarkets(ingestUser.id);
+    const prices = await this.syncLivePrices();
     const resolved = await this.syncResolutions(ingestUser.id);
     await marketCache.delPattern('list:*');
 
-    return { ...imported, resolved };
+    return { ...imported, resolved, pricesUpdated: prices.updated };
+  }
+
+  async runIntradaySync(): Promise<{ pricesUpdated: number; requoted: number; resolved: number }> {
+    const ingestUser = await db('users').where('username', 'bot_ingest').first();
+    const prices = await this.syncLivePrices();
+    const resolved = ingestUser ? await this.syncResolutions(ingestUser.id) : 0;
+    await marketCache.delPattern('list:*');
+    return { pricesUpdated: prices.updated, requoted: prices.requoted, resolved };
+  }
+
+  async syncLivePrices(): Promise<{ updated: number; requoted: number }> {
+    const open = await db('markets')
+      .where({ external_source: 'polymarket' })
+      .whereIn('status', ['active', 'paused'])
+      .select('id', 'external_id', 'current_yes_price');
+
+    if (open.length === 0) return { updated: 0, requoted: 0 };
+
+    const remote = await this.client.getMarketsByIds(
+      open.map((m: { external_id: string }) => m.external_id).filter(Boolean)
+    );
+    const byId = new Map(remote.map((m) => [String(m.id), m]));
+
+    let updated = 0;
+    let requoted = 0;
+    for (const local of open) {
+      const gamma = byId.get(String(local.external_id));
+      if (!gamma || gamma.closed || gamma.archived) continue;
+      const yes = impliedYesPrice(gamma);
+      const prev = parseFloat(String(local.current_yes_price ?? 0.5));
+      if (!Number.isFinite(yes) || Math.abs(yes - prev) < 0.01) continue;
+
+      const no = clamp01(1 - yes);
+      await db('markets').where('id', local.id).update({
+        current_yes_price: yes.toFixed(8),
+        current_no_price: no.toFixed(8),
+        updated_at: new Date(),
+      });
+      await db('price_history').insert({
+        market_id: local.id,
+        yes_price: yes.toFixed(8),
+        no_price: no.toFixed(8),
+        volume: '0',
+        trade_count: 0,
+        recorded_at: new Date(),
+      });
+      await marketCache.del(`market:${local.id}`);
+      updated += 1;
+      try {
+        requoted += await this.marketMaker.requoteMarket(local.id, yes);
+      } catch (err) {
+        logger.warn('MM requote failed', { marketId: local.id, error: (err as Error).message });
+      }
+    }
+
+    if (updated > 0) logger.info('Synced Polymarket prices', { updated, requoted });
+    return { updated, requoted };
   }
 
   private async importActiveMarkets(creatorId: string) {

@@ -27,15 +27,18 @@ export function usePortfolioWebSocket({
 
   const wsRef = useRef<WebSocket | null>(null);
   const authedRef = useRef(false);
+  const syncSubscriptionsRef = useRef<(() => void) | null>(null);
 
   const lastInvalidateAtRef = useRef(0);
   const scheduledInvalidateRef = useRef<number | null>(null);
 
   const marketIdKey = useMemo(() => marketIds.slice().sort().join(","), [marketIds]);
 
-  // Keep "marketIds" fresh without recreating the WS connection.
+  // Keep "marketIds" fresh without recreating the WS connection,
+  // and subscribe to any newly added markets on the live socket.
   useEffect(() => {
     marketIdSetRef.current = new Set(marketIds);
+    syncSubscriptionsRef.current?.();
   }, [marketIdKey, marketIds]);
 
   useEffect(() => {
@@ -43,6 +46,7 @@ export function usePortfolioWebSocket({
 
     let cancelled = false;
     let reconnectAttempts = 0;
+    let reconnectTimer: number | null = null;
 
     const invalidateAll = () => {
       const now = Date.now();
@@ -130,6 +134,9 @@ export function usePortfolioWebSocket({
       authedRef.current = false;
 
       ws.onopen = () => {
+        // Successful connection: reset the backoff so the retry cap
+        // only applies to consecutive failures.
+        reconnectAttempts = 0;
         const token = getAccessToken();
         // Order matters: auth should be processed before subscribing_portfolio.
         if (token) ws.send(JSON.stringify({ type: "auth", token }));
@@ -163,6 +170,10 @@ export function usePortfolioWebSocket({
 
             if (typeof marketIdCandidate === "string" && marketIdSetRef.current.has(marketIdCandidate)) {
               invalidatePositionsOnly();
+              queryClient.invalidateQueries({ queryKey: ["market", marketIdCandidate] });
+              queryClient.invalidateQueries({ queryKey: ["market-stats", marketIdCandidate] });
+              queryClient.invalidateQueries({ queryKey: ["market-price-line", marketIdCandidate] });
+              queryClient.invalidateQueries({ queryKey: ["order-book", marketIdCandidate] });
             }
           }
           return;
@@ -193,14 +204,17 @@ export function usePortfolioWebSocket({
         if (cancelled) return;
         if (reconnectAttempts >= 6) return;
         const delayMs = Math.min(10000, 500 * 2 ** reconnectAttempts);
-        window.setTimeout(connect, delayMs);
+        reconnectTimer = window.setTimeout(connect, delayMs);
       };
     };
 
+    syncSubscriptionsRef.current = subscribeMissingMarkets;
     connect();
 
     return () => {
       cancelled = true;
+      syncSubscriptionsRef.current = null;
+      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
       if (scheduledInvalidateRef.current) window.clearTimeout(scheduledInvalidateRef.current);
       scheduledInvalidateRef.current = null;
 

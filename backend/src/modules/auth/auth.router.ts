@@ -34,6 +34,11 @@ router.post('/logout', authenticate(), async (req: Request, res: Response) => {
 });
 
 // GET /api/v1/auth/me
+router.patch('/password', authenticate(), async (req: Request, res: Response) => {
+  await authService.changePassword(req.user!.id, req.body);
+  res.json({ success: true, data: { message: 'Password updated' } });
+});
+
 router.get('/me', authenticate(), async (req: Request, res: Response) => {
   res.json({ success: true, data: req.user });
 });

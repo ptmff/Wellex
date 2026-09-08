@@ -49,7 +49,8 @@ GET /portfolio
 GET /portfolio/positions
 GET /portfolio/trades
 GET /portfolio/pnl
-POST /economy/ad-reward
+POST /economy/ads/session
+POST /economy/ad-reward { sessionId }
 WS subscribe_portfolio
 ```
 
@@ -61,6 +62,15 @@ WS subscribe_portfolio
 3. ЮKassa HTTP-уведомление POST /economy/webhooks/yookassa
    (локально без туннеля: GET /economy/purchases/:id сам спрашивает API ЮKassa)
 4. Идемпотентный кредит WX, coin_purchases.status = succeeded
+```
+
+### 5c. Реклама за WX
+
+```
+1. POST /economy/ads/session → sessionId (nonce Redis 10 мин)
+2. Клиент: RewardedAd (РСЯ при AD_PROVIDER=yandex, иначе mock-таймер)
+3. POST /economy/ad-reward { sessionId } — GETDEL nonce + pg_advisory_xact_lock
+4. creditWx(ad_reward), запись ad_rewards
 ```
 
 ### 6. Резолюция рынка (admin/moderator)

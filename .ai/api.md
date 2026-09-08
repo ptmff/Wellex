@@ -10,7 +10,7 @@
 | Auth | `Authorization: Bearer <access>` |
 | Формат | JSON `{ success, data }` / `{ success: false, error }` |
 | Валидация | Zod |
-| Rate limit | 100/min general; trading 30/min; auth 20 / 15 min |
+| Rate limit | 300/min general; trading 30/min; economy 60/min; auth 20 / 15 min |
 | Health | `GET /health`, `GET /health/detailed` (без `/api/v1`) |
 | Metrics | `GET /metrics` Prometheus |
 
@@ -75,11 +75,21 @@ Body trade: `{ side: yes\|no, action: buy\|sell, amount, maxSlippage?, expectedP
 | Method | Route | Auth | Описание |
 |--------|-------|------|----------|
 | GET | `/packages` | нет | Пакеты WX |
-| GET | `/me` | да | Баланс + `paymentProvider` + доступность рекламы |
+| GET | `/me` | да | Баланс + `paymentProvider` + доступность рекламы (`ad.reasonCode`, `ad.provider`) |
 | POST | `/purchase` | да | `{ packageSlug }` → mock: кредит сразу; ЮKassa: `{ status: pending, confirmationUrl }` |
 | GET | `/purchases/:id` | да | Статус своей покупки (для ЮKassa синхронизирует с API) |
-| POST | `/webhooks/yookassa` | нет | HTTP-уведомления ЮKassa; кредит WX идемпотентно |
-| POST | `/ad-reward` | да | Награда за рекламу (кулдаун / дневной лимит) |
+| POST | `/webhooks/yookassa` | нет | HTTP-уведомления ЮKassa; кредит WX идемпотентно. В prod — IP-allowlist ЮKassa |
+| POST | `/ads/session` | да | Старт rewarded-сессии |
+| POST | `/ad-reward` | да | `{ sessionId }` награда за просмотр |
+| POST | `/daily-bonus` | да | Ежедневный бонус WX (UTC-день, streak) |
+
+## Notifications — `/api/v1/notifications` (auth)
+
+`GET /`, `POST /read-all`, `POST /:id/read`
+
+Комментарии: `GET/POST /markets/:id/comments`, `DELETE /markets/:id/comments/:commentId`.
+Смена пароля: `PATCH /auth/password`.
+Leaderboard: `GET /users/leaderboard?type=pnl\|volume\|trades&period=7d\|30d\|all`.
 
 ## Portfolio — `/api/v1/portfolio` (auth)
 

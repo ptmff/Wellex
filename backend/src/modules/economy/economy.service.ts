@@ -5,13 +5,26 @@ import { db } from '../../database/connection';
 import { config } from '../../config';
 import { AppError, ErrorCode, ForbiddenError, NotFoundError } from '../../common/errors';
 import { logger } from '../../common/logger';
+import { randomUUID } from 'crypto';
 import { creditWx } from './wallet';
 import { paymentProvider } from './payment.provider';
-import { portfolioCache } from '../../infrastructure/redis/cache.service';
+import { portfolioCache, redisClient } from '../../infrastructure/redis/cache.service';
 
 export const PurchaseDto = z.object({
   packageSlug: z.string().min(1).max(50),
 });
+
+export const AdRewardClaimDto = z.object({
+  sessionId: z.string().uuid(),
+});
+
+const AD_SESSION_TTL_SECONDS = 600;
+const adSessionKey = (sessionId: string) => `pm:adsession:${sessionId}`;
+
+type AdSession = {
+  userId: string;
+  createdAt: number;
+};
 
 export const YooKassaWebhookDto = z.object({
   type: z.string().optional(),
@@ -73,7 +86,12 @@ export class EconomyService {
         )
       ),
       paymentProvider: paymentProvider.name,
-      ad,
+      ad: {
+        ...ad,
+        provider: config.AD_PROVIDER,
+        minWatchSeconds: config.AD_MIN_WATCH_SECONDS,
+      },
+      daily: await this.getDailyBonusAvailability(userId),
     };
   }
 
@@ -320,7 +338,12 @@ export class EconomyService {
     });
   }
 
-  async claimAdReward(userId: string) {
+  /**
+   * Start a rewarded-ad session: issues a one-time nonce with a short TTL.
+   * The client must show the ad (real network or mock timer) and then
+   * claim the reward with this sessionId.
+   */
+  async startAdSession(userId: string) {
     const availability = await this.getAdAvailability(userId);
     if (!availability.canWatch) {
       throw new AppError(ErrorCode.RATE_LIMITED, availability.reason ?? 'Ad reward is not available yet', 429, {
@@ -328,14 +351,72 @@ export class EconomyService {
       });
     }
 
+    const sessionId = randomUUID();
+    const session: AdSession = { userId, createdAt: Date.now() };
+    await redisClient.setex(adSessionKey(sessionId), AD_SESSION_TTL_SECONDS, JSON.stringify(session));
+
+    return {
+      sessionId,
+      provider: config.AD_PROVIDER,
+      blockId: config.AD_PROVIDER === 'yandex' ? config.YANDEX_RTB_BLOCK_ID ?? null : null,
+      rewardAmount: config.AD_REWARD_AMOUNT,
+      minWatchSeconds: config.AD_MIN_WATCH_SECONDS,
+      expiresInSeconds: AD_SESSION_TTL_SECONDS,
+    };
+  }
+
+  async claimAdReward(userId: string, input: z.infer<typeof AdRewardClaimDto>) {
+    const { sessionId } = AdRewardClaimDto.parse(input);
+    const key = adSessionKey(sessionId);
+
+    const peek = await redisClient.get(key);
+    if (!peek) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Ad session is invalid or expired', 400);
+    }
+
+    let session: AdSession;
+    try {
+      session = JSON.parse(peek) as AdSession;
+    } catch {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Ad session is corrupted', 400);
+    }
+
+    if (session.userId !== userId) {
+      throw new ForbiddenError('Ad session does not belong to this user');
+    }
+
+    const elapsedSeconds = (Date.now() - session.createdAt) / 1000;
+    if (elapsedSeconds < config.AD_MIN_WATCH_SECONDS) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Ad was not watched long enough', 400, {
+        minWatchSeconds: config.AD_MIN_WATCH_SECONDS,
+      });
+    }
+
+    // Consume the nonce only after the watch-time check so a premature
+    // claim does not burn a still-valid session.
+    const raw = await redisClient.getdel(key);
+    if (!raw) {
+      throw new AppError(ErrorCode.VALIDATION_ERROR, 'Ad session is invalid or expired', 400);
+    }
+
     const amount = new Decimal(config.AD_REWARD_AMOUNT);
 
     const result = await db.transaction(async (trx) => {
+      // Serialize concurrent claims per user, then re-check limits inside the lock.
+      await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [`ad_reward:${userId}`]);
+
+      const availability = await this.getAdAvailability(userId, trx);
+      if (!availability.canWatch) {
+        throw new AppError(ErrorCode.RATE_LIMITED, availability.reason ?? 'Ad reward is not available yet', 429, {
+          nextAt: availability.nextAt,
+        });
+      }
+
       const [reward] = await trx('ad_rewards')
         .insert({
           user_id: userId,
           wx_amount: amount.toFixed(8),
-          provider: 'mock',
+          provider: config.AD_PROVIDER,
         })
         .returning('*');
 
@@ -345,14 +426,14 @@ export class EconomyService {
         amount,
         'ad_reward',
         `Watched ad reward ${amount.toFixed(0)} ${config.CURRENCY_CODE}`,
-        { referenceType: 'ad_reward', referenceId: reward.id }
+        { referenceType: 'ad_reward', referenceId: reward.id, metadata: { sessionId } }
       );
 
       return { reward, credited };
     });
 
     await portfolioCache.del(`portfolio:${userId}`);
-    logger.info('Ad reward granted', { userId, amount: amount.toNumber() });
+    logger.info('Ad reward granted', { userId, amount: amount.toNumber(), provider: config.AD_PROVIDER });
 
     return {
       wxAmount: amount.toNumber(),
@@ -362,14 +443,14 @@ export class EconomyService {
     };
   }
 
-  private async getAdAvailability(userId: string) {
+  private async getAdAvailability(userId: string, trx: Knex = db) {
     const cooldownMs = config.AD_REWARD_COOLDOWN_HOURS * 60 * 60 * 1000;
     const startOfDay = new Date();
-    startOfDay.setHours(0, 0, 0, 0);
+    startOfDay.setUTCHours(0, 0, 0, 0);
 
     const [last, todayCountRow] = await Promise.all([
-      db('ad_rewards').where('user_id', userId).orderBy('created_at', 'desc').first(),
-      db('ad_rewards').where('user_id', userId).where('created_at', '>=', startOfDay).count('* as count').first(),
+      trx('ad_rewards').where('user_id', userId).orderBy('created_at', 'desc').first(),
+      trx('ad_rewards').where('user_id', userId).where('created_at', '>=', startOfDay).count('* as count').first(),
     ]);
 
     const adsToday = parseInt(String((todayCountRow as { count?: string })?.count ?? 0), 10);
@@ -379,7 +460,7 @@ export class EconomyService {
 
     if (adsToday >= config.AD_REWARD_MAX_PER_DAY) {
       const tomorrow = new Date(startOfDay);
-      tomorrow.setDate(tomorrow.getDate() + 1);
+      tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
       return {
         canWatch: false,
         adsToday,
@@ -387,6 +468,7 @@ export class EconomyService {
         rewardAmount: config.AD_REWARD_AMOUNT,
         nextAt: tomorrow.toISOString(),
         reason: 'Daily ad reward limit reached',
+        reasonCode: 'daily_limit' as const,
       };
     }
 
@@ -398,6 +480,7 @@ export class EconomyService {
         rewardAmount: config.AD_REWARD_AMOUNT,
         nextAt: nextByCooldown.toISOString(),
         reason: 'Ad reward cooldown active',
+        reasonCode: 'cooldown' as const,
       };
     }
 
@@ -408,6 +491,74 @@ export class EconomyService {
       rewardAmount: config.AD_REWARD_AMOUNT,
       nextAt: null as string | null,
       reason: null as string | null,
+      reasonCode: null as 'daily_limit' | 'cooldown' | null,
+    };
+  }
+
+  private utcToday(): string {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  private utcYesterday(): string {
+    const d = new Date();
+    d.setUTCDate(d.getUTCDate() - 1);
+    return d.toISOString().slice(0, 10);
+  }
+
+  async getDailyBonusAvailability(userId: string) {
+    const today = this.utcToday();
+    const claimed = await db('daily_bonus_claims').where({ user_id: userId, claimed_on: today }).first();
+    const yesterday = await db('daily_bonus_claims').where({ user_id: userId, claimed_on: this.utcYesterday() }).first();
+    return {
+      canClaim: !claimed,
+      amount: config.DAILY_BONUS_AMOUNT,
+      streak: claimed ? claimed.streak : yesterday ? yesterday.streak : 0,
+      claimedOn: claimed ? today : null,
+    };
+  }
+
+  async claimDailyBonus(userId: string) {
+    const today = this.utcToday();
+    const amount = new Decimal(config.DAILY_BONUS_AMOUNT);
+
+    const result = await db.transaction(async (trx) => {
+      await trx.raw('SELECT pg_advisory_xact_lock(hashtext(?))', [`daily_bonus:${userId}`]);
+      const existing = await trx('daily_bonus_claims').where({ user_id: userId, claimed_on: today }).first();
+      if (existing) {
+        throw new AppError(ErrorCode.RATE_LIMITED, 'Daily bonus already claimed', 429);
+      }
+
+      const yesterday = await trx('daily_bonus_claims')
+        .where({ user_id: userId, claimed_on: this.utcYesterday() })
+        .first();
+      const streak = (yesterday?.streak ?? 0) + 1;
+
+      const [claim] = await trx('daily_bonus_claims')
+        .insert({
+          user_id: userId,
+          claimed_on: today,
+          streak,
+          wx_amount: amount.toFixed(8),
+        })
+        .returning('*');
+
+      const credited = await creditWx(
+        trx,
+        userId,
+        amount,
+        'daily_bonus',
+        `Daily bonus day ${streak}`,
+        { referenceType: 'daily_bonus', referenceId: claim.id }
+      );
+      return { credited, streak };
+    });
+
+    await portfolioCache.del(`portfolio:${userId}`);
+    return {
+      wxAmount: amount.toNumber(),
+      currency: config.CURRENCY_CODE,
+      available: result.credited.balanceAfter.toNumber(),
+      streak: result.streak,
     };
   }
 

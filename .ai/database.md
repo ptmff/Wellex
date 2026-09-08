@@ -27,7 +27,7 @@
 | `users` | Аккаунты, роли, lockout, **`is_bot`** |
 | `refresh_tokens` | Хеши refresh, revoke, device |
 | `balances` | available/reserved/total + cash-колонки, `currency` default **WX**, `version` |
-| `balance_transactions` | Леджер: deposit, trade_*, fee, **purchase**, **ad_reward**, **signup_bonus**, … |
+| `balance_transactions` | Леджер: deposit, trade_*, fee, **purchase**, **ad_reward**, **signup_bonus**, **daily_bonus**, … |
 | `coin_packages` | Пакеты WX для магазина |
 | `coin_purchases` | Покупки WX (`provider` mock\|yookassa, unique `provider_ref`, pending/succeeded/failed) |
 | `ad_rewards` | Выдачи за рекламу (кулдаун считается по этой таблице) |
@@ -48,6 +48,7 @@ FTS: GIN `to_tsvector('english', title \|\| description)` на `markets`.
 
 - Сделки и смена резервов — в одной транзакции Knex
 - LIMIT BUY резервирует cash; LIMIT SELL — `positions.reserved_quantity`
+- MM-боты при сиде рынка минтят YES+NO сеты за 1 WX/сет (`debitWx` → `liquidity_total`)
 - `version` на balances/positions/markets — optimistic concurrency
 - Не обновлять прод-данные: продакшен БД не описан
 

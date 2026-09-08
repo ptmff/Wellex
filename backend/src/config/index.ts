@@ -17,6 +17,8 @@ const rawConfigSchema = z.object({
   DB_PASSWORD: z.string(),
   DB_POOL_MIN: z.coerce.number().default(2),
   DB_POOL_MAX: z.coerce.number().default(20),
+  DB_SSL: z.enum(['true', 'false']).optional().transform((v) => (v == null ? undefined : v === 'true')),
+  DB_SSL_REJECT_UNAUTHORIZED: z.enum(['true', 'false']).default('true').transform((v: string) => v === 'true'),
 
   // Redis
   REDIS_HOST: z.string().default('localhost'),
@@ -32,7 +34,7 @@ const rawConfigSchema = z.object({
 
   // Rate Limiting
   RATE_LIMIT_WINDOW_MS: z.coerce.number().default(60000),
-  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(10000000),
+  RATE_LIMIT_MAX_REQUESTS: z.coerce.number().default(300),
 
   // Trading / in-game currency
   MIN_TRADE_AMOUNT: z.coerce.number().default(1),
@@ -46,6 +48,13 @@ const rawConfigSchema = z.object({
   AD_REWARD_AMOUNT: z.coerce.number().default(100),
   AD_REWARD_COOLDOWN_HOURS: z.coerce.number().default(4),
   AD_REWARD_MAX_PER_DAY: z.coerce.number().default(4),
+  AD_MIN_WATCH_SECONDS: z.coerce.number().int().min(0).default(10),
+  DAILY_BONUS_AMOUNT: z.coerce.number().default(25),
+  AD_PROVIDER: z.enum(['mock', 'yandex']).default('mock'),
+  YANDEX_RTB_BLOCK_ID: z.preprocess(
+    (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
+    z.string().min(1).optional()
+  ),
   BOT_USER_BALANCE: z.coerce.number().default(1_000_000),
   PAYMENT_PROVIDER: z.enum(['mock', 'yookassa']).default('mock'),
   YOOKASSA_SHOP_ID: z.preprocess(
@@ -56,7 +65,7 @@ const rawConfigSchema = z.object({
     (v) => (typeof v === 'string' && v.trim() === '' ? undefined : v),
     z.string().min(1).optional()
   ),
-  PAYMENT_RETURN_URL: z.string().url().default('http://localhost:8080/shop'),
+  PAYMENT_RETURN_URL: z.string().url().default('http://localhost:8080/payment/result'),
 
   // Polymarket ingest (Gamma API, read-only)
   POLYMARKET_GAMMA_URL: z.string().url().default('https://gamma-api.polymarket.com'),
@@ -79,6 +88,13 @@ const rawConfigSchema = z.object({
 });
 
 const configSchema = rawConfigSchema.superRefine((data, ctx) => {
+  if (data.AD_PROVIDER === 'yandex' && !data.YANDEX_RTB_BLOCK_ID) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'YANDEX_RTB_BLOCK_ID is required when AD_PROVIDER=yandex',
+      path: ['YANDEX_RTB_BLOCK_ID'],
+    });
+  }
   if (data.PAYMENT_PROVIDER !== 'yookassa') return;
   if (!data.YOOKASSA_SHOP_ID) {
     ctx.addIssue({

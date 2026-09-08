@@ -8,7 +8,7 @@ import { IngestService } from '../../modules/ingest/ingest.service';
 
 const analyticsService = new AnalyticsService();
 
-export function startScheduledJobs(ingestService?: IngestService): void {
+export function startScheduledJobs(ingestService?: IngestService, orderBookService?: { expireDueMarkets: () => Promise<number> }): void {
   // ── Every minute: aggregate 1m candles
   cron.schedule('* * * * *', async () => {
     try {
@@ -55,10 +55,24 @@ export function startScheduledJobs(ingestService?: IngestService): void {
     }
   });
 
+  cron.schedule('*/15 * * * *', async () => {
+    if (!ingestService) return;
+    try {
+      const result = await ingestService.runIntradaySync();
+      logger.info('Intraday Polymarket price/resolution sync', result);
+    } catch (err) {
+      logger.error('Intraday Polymarket sync failed', { error: (err as Error).message });
+    }
+  });
+
   // ── Every minute: expire markets that have passed closes_at
   cron.schedule('* * * * *', async () => {
     try {
-      await expireMarkets();
+      if (orderBookService) {
+        await orderBookService.expireDueMarkets();
+      } else {
+        await expireMarkets();
+      }
     } catch (err) {
       logger.error('Market expiry job failed', { error: (err as Error).message });
     }

@@ -15,6 +15,8 @@ import Shop from "./pages/Shop";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
+import Leaderboard from "./pages/Leaderboard";
+import PaymentResult from "./pages/PaymentResult";
 
 const queryClient = new QueryClient();
 
@@ -54,6 +56,15 @@ const App = () => (
                   </ProtectedRoute>
                 }
               />
+              <Route
+                path="/payment/result"
+                element={
+                  <ProtectedRoute>
+                    <PaymentResult />
+                  </ProtectedRoute>
+                }
+              />
+              <Route path="/leaderboard" element={<Leaderboard />} />
               <Route
                 path="/create"
                 element={

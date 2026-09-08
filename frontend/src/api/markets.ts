@@ -188,3 +188,32 @@ export async function getMarketPriceLine(
   return request<PriceLinePoint[]>(`/analytics/markets/${marketId}/price-line${qs}`, { method: "GET", authRequired: false });
 }
 
+export type MarketComment = {
+  id: string;
+  body: string;
+  createdAt: string;
+  user: { id: string; username: string; displayName: string | null };
+};
+
+export async function listMarketComments(request: AuthRequest, marketId: string, page = 1) {
+  return request<{ data: MarketComment[]; total: number; page: number; totalPages: number }>(
+    `/markets/${marketId}/comments?page=${page}&limit=30`,
+    { method: "GET", authRequired: false },
+  );
+}
+
+export async function addMarketComment(request: AuthRequest, marketId: string, body: string) {
+  return request<MarketComment>(`/markets/${marketId}/comments`, {
+    method: "POST",
+    body: { body },
+    authRequired: true,
+  });
+}
+
+export async function deleteMarketComment(request: AuthRequest, marketId: string, commentId: string) {
+  return request<{ deleted: boolean }>(`/markets/${marketId}/comments/${commentId}`, {
+    method: "DELETE",
+    authRequired: true,
+  });
+}
+

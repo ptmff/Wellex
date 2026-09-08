@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { User, Settings, LogOut, Shield, Bell, ExternalLink } from "lucide-react";
@@ -11,7 +11,11 @@ import { formatWx } from "@/lib/money";
 
 export default function Profile() {
   const { user, request, logout } = useAuth();
-  const { language } = useI18n();
+  const { language, setLanguage } = useI18n();
+  const [openPanel, setOpenPanel] = useState<"none" | "security" | "apps" | "prefs">("none");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [pwdMsg, setPwdMsg] = useState<string | null>(null);
 
   const { data: portfolio, isLoading: isPortfolioLoading, isError, error } = useQuery({
     queryKey: ["portfolio"],
@@ -86,7 +90,13 @@ export default function Profile() {
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 mt-5">
+          <div className="grid grid-cols-3 gap-3 mt-5" id="profile-notifications">
+            {isPortfolioLoading ? (
+              <div className="col-span-3 text-center text-sm text-muted-foreground py-3">
+                {language === "ru" ? "Загрузка баланса…" : "Loading balance…"}
+              </div>
+            ) : (
+              <>
             <div className="text-center p-3 rounded-lg bg-secondary/50">
               <div className="text-lg font-bold">{formatWx(stats.totalBalance)}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
@@ -99,6 +109,8 @@ export default function Profile() {
               <div className="text-lg font-bold">{stats.openPositions}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Открытые позиции" : "Open Positions"}</div>
             </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -147,39 +159,109 @@ export default function Profile() {
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Настройки" : "Settings"}</h2>
             <div className="space-y-1">
-              {[
-                {
-                  icon: Bell,
-                  label: language === "ru" ? "Уведомления" : "Notifications",
-                  desc: language === "ru" ? "Управление оповещениями" : "Manage alerts",
-                },
-                {
-                  icon: Shield,
-                  label: language === "ru" ? "Безопасность" : "Security",
-                  desc: language === "ru" ? "2FA и пароли" : "2FA and passwords",
-                },
-                {
-                  icon: ExternalLink,
-                  label: language === "ru" ? "Подключенные приложения" : "Connected Apps",
-                  desc: language === "ru" ? "Управление интеграциями" : "Manage integrations",
-                },
-                {
-                  icon: Settings,
-                  label: language === "ru" ? "Предпочтения" : "Preferences",
-                  desc: language === "ru" ? "Язык, интерфейс" : "Language, display",
-                },
-              ].map((item) => (
-                <button
-                  key={item.label}
-                  className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
-                >
-                  <item.icon className="h-4 w-4 text-muted-foreground" />
-                  <div>
-                    <div className="text-sm font-medium">{item.label}</div>
-                    <div className="text-[11px] text-muted-foreground">{item.desc}</div>
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
+                onClick={() => {
+                  document.getElementById("profile-notifications")?.scrollIntoView({ behavior: "smooth" });
+                }}
+              >
+                <Bell className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">{language === "ru" ? "Уведомления" : "Notifications"}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {language === "ru" ? "Колокольчик в шапке: сделки и резолюции" : "Bell in the header: fills and resolutions"}
                   </div>
-                </button>
-              ))}
+                </div>
+              </button>
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
+                onClick={() => setOpenPanel(openPanel === "security" ? "none" : "security")}
+              >
+                <Shield className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">{language === "ru" ? "Безопасность" : "Security"}</div>
+                  <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Смена пароля" : "Change password"}</div>
+                </div>
+              </button>
+              {openPanel === "security" ? (
+                <form
+                  className="px-3 pb-3 space-y-2"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setPwdMsg(null);
+                    try {
+                      await request("/auth/password", {
+                        method: "PATCH",
+                        body: { currentPassword, newPassword },
+                        authRequired: true,
+                      });
+                      setPwdMsg(language === "ru" ? "Пароль обновлён" : "Password updated");
+                      setCurrentPassword("");
+                      setNewPassword("");
+                    } catch (err) {
+                      setPwdMsg(typeof (err as { message?: string }).message === "string"
+                        ? (err as { message: string }).message
+                        : language === "ru" ? "Не удалось сменить пароль" : "Failed to change password");
+                    }
+                  }}
+                >
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder={language === "ru" ? "Текущий пароль" : "Current password"}
+                    className="w-full bg-secondary rounded-lg px-3 py-2 text-sm"
+                  />
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder={language === "ru" ? "Новый пароль" : "New password"}
+                    className="w-full bg-secondary rounded-lg px-3 py-2 text-sm"
+                  />
+                  <button type="submit" className="text-sm font-medium text-primary">
+                    {language === "ru" ? "Сохранить" : "Save"}
+                  </button>
+                  {pwdMsg ? <div className="text-xs text-muted-foreground">{pwdMsg}</div> : null}
+                </form>
+              ) : null}
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
+                onClick={() => setOpenPanel(openPanel === "apps" ? "none" : "apps")}
+              >
+                <ExternalLink className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">{language === "ru" ? "Подключенные приложения" : "Connected Apps"}</div>
+                  <div className="text-[11px] text-muted-foreground">{language === "ru" ? "OAuth-интеграции" : "OAuth integrations"}</div>
+                </div>
+              </button>
+              {openPanel === "apps" ? (
+                <p className="px-3 pb-3 text-xs text-muted-foreground">
+                  {language === "ru"
+                    ? "Сторонние приложения пока не подключаются. ЮKassa и РСЯ настраиваются на сервере, не в аккаунте."
+                    : "No third-party apps yet. YooKassa and ads are configured on the server, not per account."}
+                </p>
+              ) : null}
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
+                onClick={() => setOpenPanel(openPanel === "prefs" ? "none" : "prefs")}
+              >
+                <Settings className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">{language === "ru" ? "Предпочтения" : "Preferences"}</div>
+                  <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Язык интерфейса" : "Interface language"}</div>
+                </div>
+              </button>
+              {openPanel === "prefs" ? (
+                <div className="px-3 pb-3 flex gap-2">
+                  <button type="button" className={`px-3 py-1 rounded-lg text-xs ${language === "ru" ? "bg-accent" : "bg-secondary"}`} onClick={() => setLanguage("ru")}>RU</button>
+                  <button type="button" className={`px-3 py-1 rounded-lg text-xs ${language === "en" ? "bg-accent" : "bg-secondary"}`} onClick={() => setLanguage("en")}>EN</button>
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={() => logout()}

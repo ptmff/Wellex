@@ -10,6 +10,7 @@ import { config } from './config';
 import { logger, createRequestLogger } from './common/logger';
 import { errorHandler } from './common/errors';
 import { requestId, responseTime, sanitizeResponse } from './common/middleware';
+import { requireAdminKey } from './common/guards';
 import { metricsMiddleware, getMetrics, getContentType } from './infrastructure/metrics/prometheus';
 import { checkDatabaseConnection } from './database/connection';
 import { runMigrations } from './database/migrations/001_initial_schema';
@@ -36,6 +37,8 @@ import { analyticsRouter } from './modules/analytics/analytics.router';
 import { activityRouter } from './modules/activity/activity.router';
 import { adminRouter } from './modules/admin/admin.router';
 import { economyRouter } from './modules/economy/economy.router';
+import { NotificationService } from './modules/notifications/notification.service';
+import { notificationRouter } from './modules/notifications/notification.router';
 
 async function bootstrap(): Promise<void> {
   // ── Validate connections
@@ -52,7 +55,8 @@ async function bootstrap(): Promise<void> {
   const wsService = new WebSocketService();
   const activityService = new ActivityService();
   const analyticsService = new AnalyticsService();
-  const orderBookService = new OrderBookService(wsService, activityService);
+  const notificationService = new NotificationService(wsService);
+  const orderBookService = new OrderBookService(wsService, activityService, notificationService);
   const marketMakerService = new MarketMakerService(orderBookService);
   const ingestService = new IngestService(new PolymarketClient(), marketMakerService, orderBookService);
 
@@ -62,11 +66,18 @@ async function bootstrap(): Promise<void> {
   app.locals.orderBookService = orderBookService;
   app.locals.ingestService = ingestService;
   app.locals.marketMakerService = marketMakerService;
+  app.locals.notificationService = notificationService;
 
   // ── WebSocket
   wsService.initialize(httpServer);
 
   // ── Security middleware
+  if (config.NODE_ENV === 'production') {
+    // Behind a reverse proxy (nginx etc.): trust the first hop so req.ip
+    // reflects the real client for rate limiting and webhook IP checks.
+    app.set('trust proxy', 1);
+  }
+
   app.use(helmet({
     contentSecurityPolicy: config.NODE_ENV === 'production',
     crossOriginEmbedderPolicy: config.NODE_ENV === 'production',
@@ -114,6 +125,13 @@ async function bootstrap(): Promise<void> {
     keyGenerator: (req) => req.ip ?? 'unknown',
   });
 
+  // Economy endpoints limiter (shop, ad rewards)
+  const economyLimiter = rateLimit({
+    windowMs: 60_000,
+    max: 60,
+    keyGenerator: (req) => req.user?.id ?? req.ip ?? 'unknown',
+  });
+
   // ── General middleware
   app.use(compression());
   app.use(express.json({ limit: '1mb' }));
@@ -134,7 +152,9 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  app.get('/health/detailed', async (_req, res) => {
+  const opsAuth = config.NODE_ENV === 'production' ? [requireAdminKey] : [];
+
+  app.get('/health/detailed', ...opsAuth, async (_req, res) => {
     const checks = await Promise.allSettled([
       checkDatabaseConnection(),
       redisClient.ping(),
@@ -153,7 +173,7 @@ async function bootstrap(): Promise<void> {
     });
   });
 
-  app.get('/metrics', async (_req, res) => {
+  app.get('/metrics', ...opsAuth, async (_req, res) => {
     res.set('Content-Type', getContentType());
     res.end(await getMetrics());
   });
@@ -170,7 +190,8 @@ async function bootstrap(): Promise<void> {
   app.use(`${apiV1}/analytics`, limiter, analyticsRouter);
   app.use(`${apiV1}/activity`, limiter, activityRouter);
   app.use(`${apiV1}/admin`, limiter, adminRouter);
-  app.use(`${apiV1}/economy`, limiter, economyRouter);
+  app.use(`${apiV1}/economy`, economyLimiter, economyRouter);
+  app.use(`${apiV1}/notifications`, limiter, notificationRouter);
 
   // 404 handler
   app.use((_req, res) => {
@@ -189,7 +210,7 @@ async function bootstrap(): Promise<void> {
 
   // ── Start background jobs
   if (config.NODE_ENV !== 'test') {
-    startScheduledJobs(ingestService);
+    startScheduledJobs(ingestService, orderBookService);
     startWorkers(analyticsService, orderBookService);
     await scheduleRecurringJobs();
     if (config.INGEST_ON_START) {

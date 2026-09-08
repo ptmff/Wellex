@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { TrendingUp, Clock, Sparkles, LayoutGrid, List } from "lucide-react";
+import { useSearchParams } from "react-router-dom";
 import { MarketCard } from "@/components/MarketCard";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";
-import { listMarkets, type BackendMarket, type ListMarketsInput } from "@/api/markets";
+import { listMarketCategories, listMarkets, type BackendMarket, type ListMarketsInput } from "@/api/markets";
 import { parseDate } from "@/lib/date";
 import { useI18n } from "@/i18n/I18nContext";
 import { formatWx } from "@/lib/money";
@@ -15,9 +16,10 @@ type Filter = "all" | "trending" | "new" | "ending";
 export default function MarketsPage() {
   const { t, language } = useI18n();
   const [filter, setFilter] = useState<Filter>("all");
-  const [categoryKey, setCategoryKey] = useState<string | "all">("all");
+  const [categoryId, setCategoryId] = useState<string | "all">("all");
   const [viewMode, setViewMode] = useState<"grid" | "list">("grid");
-  const [search, setSearch] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [search, setSearch] = useState(searchParams.get("q") ?? "");
   const [page, setPage] = useState(1);
 
   const filters: { key: Filter; label: string; icon: any }[] = [
@@ -29,24 +31,26 @@ export default function MarketsPage() {
 
   const { request } = useAuth();
 
-  const listLimit = filter === "new" || filter === "ending" ? 30 : 12;
+  const categoriesQuery = useQuery({
+    queryKey: ["market-categories"],
+    queryFn: () => listMarketCategories(request),
+    enabled: !!request,
+    staleTime: 60_000,
+  });
 
-  // Формируем categories из текущей страницы рынков.
-  const [categories, setCategories] = useState<Array<{ key: string; name: string; id?: string }>>([{ key: "all", name: t("index.filter.all") }]);
+  const listLimit = filter === "new" || filter === "ending" ? 30 : 12;
 
   const listParams = useMemo<ListMarketsInput>(() => {
     return {
       page,
       limit: listLimit,
       search: search.trim() ? search.trim() : undefined,
-      // В текущем ответе бекенда нет `category.id`, поэтому фильтрацию по категориям временно отключаем
-      // и используем категории только для отображения/UX.
-      categoryId: undefined,
+      categoryId: categoryId === "all" ? undefined : categoryId,
       featured: filter === "trending" ? true : undefined,
-      sortBy: "created_at",
-      sortOrder: "desc",
+      sortBy: filter === "ending" ? "closes_at" : "created_at",
+      sortOrder: filter === "ending" ? "asc" : "desc",
     };
-  }, [filter, listLimit, page, search]);
+  }, [filter, listLimit, page, search, categoryId]);
 
   const marketsQuery = useQuery({
     queryKey: ["markets", listParams],
@@ -59,49 +63,38 @@ export default function MarketsPage() {
   // Сброс статуса при смене основных фильтров/поиска.
   useEffect(() => {
     setPage(1);
-  }, [filter, search]);
+  }, [filter, search, categoryId]);
 
-  // Обновляем список категорий из текущих данных рынка.
   useEffect(() => {
-    const items: BackendMarket[] = marketsQuery.data?.data ?? [];
-    const map = new Map<string, { key: string; name: string; id?: string }>();
-    for (const m of items) {
-      const cat = m.category;
-      if (!cat) continue;
-      const key = cat.slug ?? cat.name;
-      if (!map.has(key)) map.set(key, { key, name: cat.name, id: cat.id });
-    }
-    const arr = Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
-    setCategories([{ key: "all", name: t("index.filter.all") }, ...arr]);
-  }, [marketsQuery.data, t]);
+    const q = searchParams.get("q") ?? "";
+    if (q !== search) setSearch(q);
+  }, [searchParams]);
+
+  const categories = useMemo(
+    () => [{ id: "all", name: t("index.filter.all") }, ...(categoriesQuery.data ?? [])],
+    [categoriesQuery.data, t],
+  );
 
   const filtered = useMemo(() => {
     const data = marketsQuery.data?.data ?? [];
-    const categoryFiltered =
-      categoryKey === "all"
-        ? data
-        : data.filter((m) => (m.category?.slug ?? m.category?.name ?? "") === categoryKey);
     if (filter === "new") {
       const now = Date.now();
       const windowMs = 14 * 24 * 60 * 60 * 1000;
-      return categoryFiltered.filter((m) => {
-        const t = parseDate(m.createdAt)?.getTime();
-        return t !== null && now - t <= windowMs;
+      return data.filter((m) => {
+        const ts = parseDate(m.createdAt)?.getTime();
+        return ts !== null && now - ts <= windowMs;
       });
     }
     if (filter === "ending") {
       const now = Date.now();
       const windowMs = 7 * 24 * 60 * 60 * 1000;
-      return data
-        .filter((m) => {
-          const closesTs = parseDate(m.closesAt)?.getTime();
-          return closesTs !== null && closesTs >= now && closesTs - now <= windowMs;
-        })
-        .sort((a, b) => (parseDate(a.closesAt)?.getTime() ?? 0) - (parseDate(b.closesAt)?.getTime() ?? 0));
+      return data.filter((m) => {
+        const closesTs = parseDate(m.closesAt)?.getTime();
+        return closesTs !== null && closesTs >= now && closesTs - now <= windowMs;
+      });
     }
-    // `trending` is already applied via backend `featured=true`.
-    return categoryFiltered;
-  }, [filter, marketsQuery.data, categoryKey]);
+    return data;
+  }, [filter, marketsQuery.data]);
 
   const volume24h = useMemo(
     () => (marketsQuery.data?.data ?? []).reduce((sum, m) => sum + (m.stats.volume24h ?? 0), 0),
@@ -161,6 +154,7 @@ export default function MarketsPage() {
             onChange={(e) => {
               setPage(1);
               setSearch(e.target.value);
+              setSearchParams(e.target.value.trim() ? { q: e.target.value.trim() } : {}, { replace: true });
             }}
             placeholder={t("index.search")}
             className="w-40 hidden sm:block bg-secondary text-xs text-foreground placeholder:text-muted-foreground rounded-lg px-3 py-1.5 outline-none focus:ring-1 focus:ring-primary/50 transition-all"
@@ -188,13 +182,13 @@ export default function MarketsPage() {
       <div className="flex items-center gap-1.5 mb-6 overflow-x-auto pb-2 scrollbar-none">
         {categories.map((cat) => (
           <button
-            key={cat.key}
+            key={cat.id}
             onClick={() => {
               setPage(1);
-              setCategoryKey(cat.key as any);
+              setCategoryId(cat.id);
             }}
             className={`px-3 py-1 rounded-full text-xs font-medium whitespace-nowrap transition-all duration-200 ${
-              categoryKey === cat.key
+              categoryId === cat.id
                 ? "bg-accent text-foreground border border-border"
                 : "text-muted-foreground hover:text-foreground"
             }`}
@@ -207,7 +201,7 @@ export default function MarketsPage() {
       {/* Grid */}
       <AnimatePresence mode="wait">
         <motion.div
-          key={`${filter}-${categoryKey}-${search}`}
+          key={`${filter}-${categoryId}-${search}`}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

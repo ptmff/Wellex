@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { db, paginate, PaginationParams } from '../../database/connection';
+import { db, paginate } from '../../database/connection';
 import { marketCache } from '../../infrastructure/redis/cache.service';
 import { AppError, ErrorCode, NotFoundError } from '../../common/errors';
 import { logger } from '../../common/logger';
@@ -339,5 +339,70 @@ export class MarketsService {
       createdAt: market.created_at,
       updatedAt: market.updated_at,
     };
+  }
+
+  async listComments(marketId: string, page = 1, limit = 30) {
+    const market = await db('markets').where('id', marketId).first();
+    if (!market) throw new NotFoundError('Market', marketId);
+
+    const result = await paginate(
+      db('market_comments as c')
+        .join('users as u', 'c.user_id', 'u.id')
+        .where('c.market_id', marketId)
+        .orderBy('c.created_at', 'desc')
+        .select(
+          'c.id',
+          'c.body',
+          'c.created_at',
+          'c.user_id',
+          'u.username',
+          'u.display_name'
+        ),
+      { page, limit: Math.min(limit, 50) }
+    );
+
+    return {
+      ...result,
+      data: result.data.map((row: {
+        id: string;
+        body: string;
+        created_at: Date;
+        user_id: string;
+        username: string;
+        display_name: string | null;
+      }) => ({
+        id: row.id,
+        body: row.body,
+        createdAt: row.created_at,
+        user: { id: row.user_id, username: row.username, displayName: row.display_name },
+      })),
+    };
+  }
+
+  async addComment(marketId: string, userId: string, body: string) {
+    const text = z.string().trim().min(1).max(1000).parse(body);
+    const market = await db('markets').where('id', marketId).first();
+    if (!market) throw new NotFoundError('Market', marketId);
+
+    const [row] = await db('market_comments')
+      .insert({ market_id: marketId, user_id: userId, body: text })
+      .returning('*');
+    const user = await db('users').select('id', 'username', 'display_name').where('id', userId).first();
+    if (!user) throw new NotFoundError('User', userId);
+    return {
+      id: row.id,
+      body: row.body,
+      createdAt: row.created_at,
+      user: { id: user.id, username: user.username, displayName: user.display_name },
+    };
+  }
+
+  async deleteComment(commentId: string, userId: string, role: string) {
+    const row = await db('market_comments').where('id', commentId).first();
+    if (!row) throw new NotFoundError('Comment', commentId);
+    if (row.user_id !== userId && role !== 'admin' && role !== 'moderator') {
+      throw new AppError(ErrorCode.FORBIDDEN, 'Not allowed to delete this comment', 403);
+    }
+    await db('market_comments').where('id', commentId).delete();
   }
 }

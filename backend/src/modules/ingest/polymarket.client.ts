@@ -17,6 +17,9 @@ export type GammaMarket = {
   volume24hr?: number;
   groupItemTitle?: string | null;
   slug?: string;
+  umaResolutionStatus?: string;
+  winner?: string;
+  outcome?: string;
   events?: Array<{ id?: string; title?: string; slug?: string }>;
 };
 
@@ -73,6 +76,10 @@ export function impliedYesPrice(market: GammaMarket): number {
 }
 
 export function resolvedOutcome(market: GammaMarket): 'yes' | 'no' | null {
+  const winnerRaw = String(market.winner ?? market.outcome ?? '').trim().toLowerCase();
+  if (winnerRaw === 'yes') return 'yes';
+  if (winnerRaw === 'no') return 'no';
+
   if (!market.closed) return null;
   const outcomes = parseOutcomes(market).map((o) => o.trim().toLowerCase());
   const prices = parseOutcomePrices(market);

@@ -1,5 +1,5 @@
 import React from "react";
-import { Navigate } from "react-router-dom";
+import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "./AuthContext";
 import { useI18n } from "@/i18n/I18nContext";
 import { isStaffRole } from "@/lib/money";
@@ -13,13 +13,14 @@ export function ProtectedRoute({
 }) {
   const { user, isLoading } = useAuth();
   const { language } = useI18n();
+  const location = useLocation();
 
   if (isLoading) {
     return <div className="text-center py-20 text-muted-foreground">{language === "ru" ? "Загрузка..." : "Loading..."}</div>;
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
   }
 
   if (staffOnly && !isStaffRole(user.role)) {

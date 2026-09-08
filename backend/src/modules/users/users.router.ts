@@ -9,8 +9,9 @@ const router = Router();
 // GET /api/v1/users/leaderboard
 router.get('/leaderboard', async (req: Request, res: Response) => {
   const type = (req.query.type as 'volume' | 'pnl' | 'trades') ?? 'volume';
+  const period = (req.query.period as '7d' | '30d' | 'all') ?? 'all';
   const limit = Math.min(parseInt(String(req.query.limit ?? 20)), 100);
-  const data = await usersService.getLeaderboard(type, limit);
+  const data = await usersService.getLeaderboard(type, limit, period);
   res.json({ success: true, data });
 });
 

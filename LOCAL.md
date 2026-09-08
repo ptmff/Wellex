@@ -164,16 +164,46 @@ YOOKASSA_SECRET_KEY=...
 PAYMENT_RETURN_URL=http://localhost:8080/shop
 ```
 
-Webhook с интернета: `https://<туннель>/api/v1/economy/webhooks/yookassa`. Локально достаточно возврата на `/shop?purchase=...` — бэкенд сам спросит статус у API ЮKassa.
+Webhook с интернета: `https://<туннель>/api/v1/economy/webhooks/yookassa`. Возврат с кассы: `/payment/result?purchase=...`.
 
 ---
 
-## 7. Полезные URL
+## 7. Реклама за WX (РСЯ)
+
+По умолчанию `AD_PROVIDER=mock` — в магазине крутится таймер, награда всё равно через `POST /economy/ads/session` + `POST /economy/ad-reward`.
+
+Живая реклама Яндекс РСЯ (нужен **публичный HTTPS-сайт**, прошедший модерацию):
+
+```
+AD_PROVIDER=yandex
+YANDEX_RTB_BLOCK_ID=R-A-XXXXXXX-Y
+```
+
+На localhost реальная сеть не покажет объявления — это ограничение РСЯ, не кода.
+
+---
+
+## 8. Публичный деплой (кратко)
+
+Код сам сервер не поднимает — нужен VPS с Docker, домен и HTTPS (nginx/Caddy).
+
+1. DNS A-запись на IP VPS.
+2. `NODE_ENV=production`, сильные JWT-секреты, `ALLOWED_ORIGINS=https://your.domain`.
+3. Postgres: `DB_SSL=true` (по умолчанию в prod), при корпоративном CA с самоподписью — `DB_SSL_REJECT_UNAUTHORIZED=false`.
+4. ЮKassa webhook: `https://your.domain/api/v1/economy/webhooks/yookassa` (IP-allowlist включится сам в prod).
+5. Prometheus: `GET /metrics` в prod требует заголовок `X-Admin-Key`.
+6. РСЯ: тот же публичный HTTPS-сайт отдать на модерацию, затем `AD_PROVIDER=yandex`.
+
+---
+
+## 9. Полезные URL
 
 | URL | Назначение |
 |-----|------------|
 | http://localhost:8080/ | UI |
 | http://localhost:8080/shop | Магазин WX |
+| http://localhost:8080/leaderboard | Лидеры |
+| http://localhost:8080/payment/result | Возврат ЮKassa |
 | http://localhost:3000/health | Жив ли API |
 | http://localhost:3000/health/detailed | Postgres + Redis |
 | http://localhost:3000/api/v1 | REST |

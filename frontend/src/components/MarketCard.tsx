@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
 import { Clock, Users, TrendingUp } from "lucide-react";
 import { motion } from "framer-motion";
-import { formatVolume } from "@/lib/mock-data";
+import { formatVolume } from "@/lib/money";
 import { MiniChart } from "./MiniChart";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthContext";

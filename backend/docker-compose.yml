@@ -23,9 +23,11 @@ services:
       - SEED_ON_START=true
       - INGEST_ON_START=true
       - PAYMENT_PROVIDER=mock
-      - PAYMENT_RETURN_URL=http://localhost:8080/shop
+      - PAYMENT_RETURN_URL=http://localhost:8080/payment/result
+      - AD_PROVIDER=mock
       # Real checkout: PAYMENT_PROVIDER=yookassa + YOOKASSA_SHOP_ID + YOOKASSA_SECRET_KEY
       # HTTP notifications: http://<public-host>/api/v1/economy/webhooks/yookassa
+      # Real ads: AD_PROVIDER=yandex + YANDEX_RTB_BLOCK_ID (site must be approved in РСЯ)
     depends_on:
       postgres:
         condition: service_healthy

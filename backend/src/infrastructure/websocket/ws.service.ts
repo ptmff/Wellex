@@ -15,7 +15,8 @@ export type WsEventType =
   | 'heartbeat'
   | 'error'
   | 'subscribed'
-  | 'unsubscribed';
+  | 'unsubscribed'
+  | 'notification';
 
 export interface WsMessage {
   type: WsEventType;

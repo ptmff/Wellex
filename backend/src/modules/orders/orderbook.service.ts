@@ -84,7 +84,8 @@ export class OrderBookService {
 
   constructor(
     private readonly wsService: WebSocketService,
-    private readonly activityService: ActivityService
+    private readonly activityService: ActivityService,
+    private readonly notificationService?: { notifyFill: Function; notifyResolved: Function }
   ) {}
 
   // ─────────────────────────────────────────────────────────────────
@@ -172,6 +173,8 @@ export class OrderBookService {
           .update({
             available_cash: trx.raw('available_cash - ?', [reserveCashAmount.toFixed(8)]),
             reserved_cash: trx.raw('reserved_cash + ?', [reserveCashAmount.toFixed(8)]),
+            available: trx.raw('available - ?', [reserveCashAmount.toFixed(8)]),
+            reserved: trx.raw('reserved + ?', [reserveCashAmount.toFixed(8)]),
             updated_at: new Date(),
           });
       }
@@ -282,6 +285,7 @@ export class OrderBookService {
 
       for (const maker of makers) {
         if (takerRemaining.lte(EPS)) break;
+        if (maker.user_id === taker.user_id) continue;
         const makerRemaining = new Decimal(maker.remaining_quantity);
         if (makerRemaining.lte(EPS)) continue;
 
@@ -315,6 +319,7 @@ export class OrderBookService {
 
     for (const maker of makers) {
       if (takerRemaining.lte(EPS)) break;
+      if (maker.user_id === taker.user_id) continue;
       const makerRemaining = new Decimal(maker.remaining_quantity);
       if (makerRemaining.lte(EPS)) continue;
 
@@ -373,6 +378,7 @@ export class OrderBookService {
 
     for (const maker of makers) {
       if (takerRemaining.lte(EPS)) break;
+      if (maker.user_id === taker.user_id) continue;
 
       const makerPrice = new Decimal(maker.price);
       if (takerPrice.plus(makerPrice).lt(1)) break;
@@ -811,6 +817,16 @@ export class OrderBookService {
       sellOrderId: sellOrder.id,
       qty: fillQty.toFixed(4),
       price: matchPrice.toFixed(4),
+    });
+
+    void this.notificationService?.notifyFill({
+      marketId,
+      tradeId: trade.id,
+      buyerId: buyOrder.user_id,
+      sellerId: sellOrder.user_id,
+      side: tradedSide,
+      price: matchPrice.toNumber(),
+      quantity: fillQty.toNumber(),
     });
   }
 
@@ -1596,7 +1612,7 @@ export class OrderBookService {
     resolvedBy: string,
     note?: string
   ): Promise<{ totalPayouts: number; winnersCount: number }> {
-    return withTransaction(async (trx) => {
+    const result = await withTransaction(async (trx) => {
       const market = await trx('markets').where('id', marketId).forUpdate().first();
       if (!market) throw new AppError(ErrorCode.MARKET_NOT_FOUND, 'Market not found', 404);
       if (market.status === 'resolved') {
@@ -1682,6 +1698,41 @@ export class OrderBookService {
         feeTotalRemaining = feeAvailableRemaining.plus(feeReservedRemaining);
       }
 
+      // Never drive the fee sink below zero: debit what is covered,
+      // accumulate the uncovered remainder as a deficit and log it loudly.
+      let feeDeficit = new Decimal(0);
+      const debitFeeSink = async (amount: Decimal, description: string): Promise<void> => {
+        if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for payout', 500);
+        const covered = Decimal.min(amount, Decimal.max(0, feeAvailableRemaining));
+        if (amount.gt(covered)) {
+          feeDeficit = feeDeficit.plus(amount.minus(covered));
+        }
+        if (covered.lte(0)) return;
+
+        const balanceBefore = feeTotalRemaining;
+        const balanceAfter = balanceBefore.minus(covered);
+        await trx('balances')
+          .where('user_id', feeAccount.id)
+          .update({
+            available_cash: trx.raw('available_cash - ?', [covered.toFixed(8)]),
+            available: trx.raw('available - ?', [covered.toFixed(8)]),
+            total: trx.raw('total - ?', [covered.toFixed(8)]),
+            updated_at: new Date(),
+          });
+        await trx('balance_transactions').insert({
+          user_id: feeAccount.id,
+          type: 'trade_debit',
+          amount: covered.toFixed(8),
+          balance_before: balanceBefore.toFixed(8),
+          balance_after: balanceAfter.toFixed(8),
+          reference_type: 'market_resolution',
+          reference_id: marketId,
+          description,
+        });
+        feeAvailableRemaining = feeAvailableRemaining.minus(covered);
+        feeTotalRemaining = balanceAfter;
+      };
+
       const positions = await trx('positions')
         .where({ market_id: marketId })
         .where('quantity', '>', 0)
@@ -1757,29 +1808,7 @@ export class OrderBookService {
           poolRemaining = poolRemaining.minus(fromPool);
 
           if (fromFee.gt(0)) {
-            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for payout', 500);
-            const balanceBefore = feeTotalRemaining;
-            const balanceAfter = balanceBefore.minus(fromFee);
-            await trx('balances')
-              .where('user_id', feeAccount.id)
-              .update({
-                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
-                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
-                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
-                updated_at: new Date(),
-              });
-            await trx('balance_transactions').insert({
-              user_id: feeAccount.id,
-              type: 'trade_debit',
-              amount: fromFee.toFixed(8),
-              balance_before: balanceBefore.toFixed(8),
-              balance_after: balanceAfter.toFixed(8),
-              reference_type: 'market_resolution',
-              reference_id: marketId,
-              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited`,
-            });
-            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
-            feeTotalRemaining = balanceAfter;
+            await debitFeeSink(fromFee, `Market resolved ${outcome.toUpperCase()} — fee sink debited`);
           }
 
           const balance = await trx('balances')
@@ -1820,29 +1849,7 @@ export class OrderBookService {
           poolRemaining = poolRemaining.minus(fromPool);
 
           if (fromFee.gt(0)) {
-            if (!feeAccount) throw new AppError(ErrorCode.INTERNAL_ERROR, 'Missing fee sink for invalid refund', 500);
-            const balanceBefore = feeTotalRemaining;
-            const balanceAfter = balanceBefore.minus(fromFee);
-            await trx('balances')
-              .where('user_id', feeAccount.id)
-              .update({
-                available_cash: trx.raw('available_cash - ?', [fromFee.toFixed(8)]),
-                available: trx.raw('available - ?', [fromFee.toFixed(8)]),
-                total: trx.raw('total - ?', [fromFee.toFixed(8)]),
-                updated_at: new Date(),
-              });
-            await trx('balance_transactions').insert({
-              user_id: feeAccount.id,
-              type: 'trade_debit',
-              amount: fromFee.toFixed(8),
-              balance_before: balanceBefore.toFixed(8),
-              balance_after: balanceAfter.toFixed(8),
-              reference_type: 'market_resolution',
-              reference_id: marketId,
-              description: `Market resolved ${outcome.toUpperCase()} — fee sink debited (INVALID refund)`,
-            });
-            feeAvailableRemaining = feeAvailableRemaining.minus(fromFee);
-            feeTotalRemaining = balanceAfter;
+            await debitFeeSink(fromFee, `Market resolved ${outcome.toUpperCase()} — fee sink debited (INVALID refund)`);
           }
 
           const balance = await trx('balances')
@@ -1875,6 +1882,8 @@ export class OrderBookService {
         }
       }
 
+      const notifyUserIds = [...new Set(positions.map((p: { user_id: string }) => p.user_id as string))];
+
       await trx('markets')
         .where('id', marketId)
         .update({
@@ -1884,18 +1893,38 @@ export class OrderBookService {
           updated_at: new Date(),
         });
 
+      if (feeDeficit.gt(0)) {
+        logger.error('Market resolution payout deficit: collateral pool and fee sink could not cover payouts', {
+          marketId,
+          outcome,
+          deficit: feeDeficit.toFixed(8),
+        });
+      }
+
       return {
         totalPayouts: totalPayouts.toNumber(),
         winnersCount,
+        notifyUserIds,
       };
     });
+
+    void this.notificationService?.notifyResolved({
+      marketId,
+      outcome,
+      userIds: result.notifyUserIds,
+    });
+
+    return {
+      totalPayouts: result.totalPayouts,
+      winnersCount: result.winnersCount,
+    };
   }
 
   // ─────────────────────────────────────────────────────────────────
   // CANCEL ORDER
   // ─────────────────────────────────────────────────────────────────
 
-  async cancelOrder(userId: string, orderId: string): Promise<void> {
+  async cancelOrder(userId: string, orderId: string, reason = 'User cancelled'): Promise<void> {
     return withTransaction(async (trx) => {
       const order = await trx('orders')
         .where('id', orderId)
@@ -1974,7 +2003,7 @@ export class OrderBookService {
         .where('id', orderId)
         .update({
           status: 'cancelled',
-          cancel_reason: 'User cancelled',
+          cancel_reason: reason,
           updated_at: new Date(),
         });
 
@@ -2007,6 +2036,45 @@ export class OrderBookService {
       }
     }
 
+    return count;
+  }
+
+  async expireDueMarkets(): Promise<number> {
+    const due = await db('markets')
+      .where('status', 'active')
+      .where('closes_at', '<', new Date())
+      .select('id');
+
+    let count = 0;
+    for (const market of due) {
+      const openOrders = await db('orders')
+        .where({ market_id: market.id })
+        .whereIn('status', ['open', 'partially_filled', 'pending'])
+        .select('id', 'user_id');
+
+      for (const order of openOrders) {
+        try {
+          await this.cancelOrder(order.user_id, order.id, 'Market expired');
+        } catch (err) {
+          logger.warn('Failed to cancel order on market expiry', {
+            orderId: order.id,
+            marketId: market.id,
+            error: (err as Error).message,
+          });
+        }
+      }
+
+      await db('markets').where('id', market.id).update({
+        status: 'expired',
+        updated_at: new Date(),
+      });
+      await orderBookCache.del(`book:${market.id}`);
+      count += 1;
+    }
+
+    if (count > 0) {
+      logger.info(`Expired ${count} markets and released resting orders`);
+    }
     return count;
   }
 

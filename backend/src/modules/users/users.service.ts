@@ -166,46 +166,73 @@ export class UsersService {
 
   async getLeaderboard(
     type: 'volume' | 'pnl' | 'trades',
-    limit = 20
+    limit = 20,
+    period: '7d' | '30d' | 'all' = 'all'
   ) {
-    if (type === 'volume') {
-      return db('trades as t')
-        .join('users as u', 't.buyer_id', 'u.id')
+    const since =
+      period === '7d'
+        ? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+        : period === '30d'
+          ? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+          : null;
+
+    const trades = db('trades as t').modify((q) => {
+      if (since) q.where('t.executed_at', '>=', since);
+    });
+
+    if (type === 'volume' || type === 'trades') {
+      const legs = trades
+        .clone()
+        .select('t.buyer_id as user_id', 't.total_value as value', db.raw('1 as trade_flag'))
+        .unionAll(
+          trades.clone().select('t.seller_id as user_id', 't.total_value as value', db.raw('1 as trade_flag'))
+        );
+
+      const orderCol = type === 'volume' ? 'total_volume' : 'trade_count';
+      return db
+        .from(legs.as('legs'))
+        .join('users as u', 'legs.user_id', 'u.id')
         .where('u.status', 'active')
+        .where('u.is_bot', false)
         .groupBy('u.id', 'u.username', 'u.display_name', 'u.avatar_url')
-        .orderBy('total_volume', 'desc')
+        .orderBy(orderCol, 'desc')
         .limit(limit)
         .select(
-          'u.id', 'u.username', 'u.display_name', 'u.avatar_url',
-          db.raw('SUM(t.total_value) as total_volume'),
-          db.raw('COUNT(t.id) as trade_count')
+          'u.id',
+          'u.username',
+          'u.display_name',
+          'u.avatar_url',
+          db.raw('SUM(legs.value) as total_volume'),
+          db.raw('SUM(legs.trade_flag) as trade_count')
         );
     }
 
-    if (type === 'trades') {
-      return db('trades as t')
-        .join('users as u', 't.buyer_id', 'u.id')
+    if (since) {
+      return db('positions as p')
+        .join('users as u', 'p.user_id', 'u.id')
+        .join('markets as m', 'p.market_id', 'm.id')
         .where('u.status', 'active')
+        .where('u.is_bot', false)
+        .where('m.resolved_at', '>=', since)
         .groupBy('u.id', 'u.username', 'u.display_name', 'u.avatar_url')
-        .orderBy('trade_count', 'desc')
+        .orderBy('total_pnl', 'desc')
         .limit(limit)
         .select(
           'u.id', 'u.username', 'u.display_name', 'u.avatar_url',
-          db.raw('COUNT(t.id) as trade_count'),
-          db.raw('SUM(t.total_value) as total_volume')
+          db.raw('SUM(p.realized_pnl) as total_pnl')
         );
     }
 
-    // PnL leaderboard from positions
     return db('positions as p')
       .join('users as u', 'p.user_id', 'u.id')
       .where('u.status', 'active')
+      .where('u.is_bot', false)
       .groupBy('u.id', 'u.username', 'u.display_name', 'u.avatar_url')
       .orderBy('total_pnl', 'desc')
       .limit(limit)
       .select(
         'u.id', 'u.username', 'u.display_name', 'u.avatar_url',
-        db.raw('SUM(p.realized_pnl) as total_pnl')
+        db.raw('SUM(p.realized_pnl + p.unrealized_pnl) as total_pnl')
       );
   }
 }

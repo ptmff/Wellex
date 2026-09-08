@@ -9,8 +9,8 @@ Wellex/
 ├── frontend/src/
 │   ├── api/                 — HTTP-обёртки (/markets, /trading, /orders)
 │   ├── auth/                — AuthContext, session tokens, ProtectedRoute
-│   ├── pages/               — Index, MarketDetail, Portfolio, Profile, CreateMarket, Login, Register
-│   ├── components/          — TradePanel, MarketCard, layout, ui (shadcn)
+│   ├── pages/               — Index, MarketDetail, Portfolio, Profile, CreateMarket, Login, Register, Shop
+│   ├── components/          — TradePanel, MarketCard, RewardedAd, layout, ui (shadcn)
 │   ├── hooks/               — usePortfolioWebSocket, toasts
 │   └── i18n/                — RU/EN
 └── backend/src/
@@ -75,7 +75,8 @@ Wellex/
 1. **Auth** — register/login → JWT pair в `session.ts` → Bearer на API; refresh с ротацией.
 2. **Create market** — `POST /markets` (**moderator/admin**) → active; бот ingest создаёт рынки из Polymarket.
 3. **Trade** — quote → market trade или LIMIT в **WX**; транзакция Postgres → `trades` + `price_history` → WS.
-4. **Shop** — `POST /economy/purchase` → ЮKassa confirmation URL (или mock credit) → webhook / GET sync → кредит WX.
+4. **Shop** — `POST /economy/purchase` → ЮKassa confirmation URL (или mock credit) → webhook / GET sync → кредит WX. Webhook в prod дополнительно фильтруется по официальным IP ЮKassa.
+4a. **Ads** — `POST /economy/ads/session` (nonce в Redis, TTL 10 мин) → клиент показывает рекламу (`RewardedAd`: РСЯ rewarded при `AD_PROVIDER=yandex`, mock-таймер иначе) → `POST /economy/ad-reward` с `sessionId`; claim атомарен (Redis GETDEL + pg advisory lock по user).
 5. **Charts** — cron/BullMQ агрегирует `price_candles`; fallback на raw `price_history`.
 6. **Resolve** — admin/moderator `POST /admin/markets/:id/resolve` → outcome, расчёт позиций.
 

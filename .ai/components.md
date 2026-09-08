@@ -23,10 +23,11 @@
 | `WebSocketService` | `infrastructure/websocket/ws.service.ts` | Подписки, Redis pub/sub |
 | `CacheService` | `infrastructure/redis/cache.service.ts` | Кэш рынков/юзеров/стакана |
 | BullMQ queues | `infrastructure/queue/queues.ts` | trade-processing, analytics, maintenance |
-| `EconomyService` | `modules/economy/` | пакеты WX, purchase (ЮKassa/mock), webhook, ad-reward |
+| `EconomyService` | `modules/economy/` | пакеты WX, purchase (ЮKassa/mock), webhook, ad-session + ad-reward |
 | `PaymentProvider` | `modules/economy/payment.provider.ts` | порт: mock или `YooKassaPaymentProvider` |
+| `debitWx` / `creditWx` | `modules/economy/wallet.ts` | леджер WX |
 | `IngestService` | `modules/ingest/` | Polymarket Gamma → рынки Wellex |
-| `MarketMakerService` | `modules/bots/` | LIMIT-лестница ботов |
+| `MarketMakerService` | `modules/bots/` | LIMIT-лестница ботов; инвентарь оплачивается в `liquidity_total` |
 | scheduler | `infrastructure/jobs/scheduler.ts` | Cron свечей, expiry, **daily ingest** |
 | Prometheus | `infrastructure/metrics/prometheus.ts` | `/metrics` |
 
@@ -39,7 +40,8 @@
 | `api/markets.ts` | `frontend/src/api/` | Список/CRUD рынков |
 | `api/trading.ts` | | quote + market trade |
 | `api/orders.ts` | | LIMIT, book, cancel |
-| `api/economy.ts` | пакеты, purchase, реклама |
+| `api/economy.ts` | пакеты, purchase, ad-session, claim |
+| `RewardedAd` | `components/RewardedAd.tsx` | mock-таймер или РСЯ rewarded |
 | `TradePanel` | `components/TradePanel.tsx` | UI сделки в WX |
 | `Index` | `pages/Index.tsx` | Каталог рынков |
 | `Shop` | `pages/Shop.tsx` | Покупка WX + реклама |

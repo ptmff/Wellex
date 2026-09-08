@@ -120,6 +120,7 @@ export async function runMigrations(): Promise<void> {
       'purchase',
       'ad_reward',
       'signup_bonus',
+      'daily_bonus',
     ]).notNullable();
     t.decimal('amount', 20, 8).notNullable();
     t.decimal('balance_before', 20, 8).notNullable();
@@ -456,7 +457,67 @@ export async function runMigrations(): Promise<void> {
     t.index(['user_id', 'created_at']);
   });
 
+  await addEnumValueIfMissing('balance_transactions_type', 'daily_bonus');
+  await ensureBalanceTransactionTypeCheck();
+
+  await createTableIfMissing('daily_bonus_claims', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+    t.date('claimed_on').notNullable();
+    t.integer('streak').notNullable().defaultTo(1);
+    t.decimal('wx_amount', 20, 8).notNullable();
+    t.timestamp('created_at').notNullable().defaultTo(db.fn.now());
+    t.unique(['user_id', 'claimed_on']);
+  });
+
+  await createTableIfMissing('market_comments', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.uuid('market_id').notNullable().references('id').inTable('markets').onDelete('CASCADE');
+    t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+    t.text('body').notNullable();
+    t.timestamp('created_at').notNullable().defaultTo(db.fn.now());
+    t.index(['market_id', 'created_at']);
+  });
+
+  await createTableIfMissing('notifications', (t) => {
+    t.uuid('id').primary().defaultTo(db.raw('uuid_generate_v4()'));
+    t.uuid('user_id').notNullable().references('id').inTable('users').onDelete('CASCADE');
+    t.string('type', 50).notNullable();
+    t.string('title', 200).notNullable();
+    t.text('body').notNullable().defaultTo('');
+    t.jsonb('payload').notNullable().defaultTo('{}');
+    t.timestamp('read_at');
+    t.timestamp('created_at').notNullable().defaultTo(db.fn.now());
+    t.index(['user_id', 'created_at']);
+    t.index(['user_id', 'read_at']);
+  });
+
   logger.info('✅ Database migrations completed');
+}
+
+const BALANCE_TRANSACTION_TYPES = [
+  'deposit',
+  'withdrawal',
+  'trade_debit',
+  'trade_credit',
+  'fee',
+  'adjustment',
+  'refund',
+  'purchase',
+  'ad_reward',
+  'signup_bonus',
+  'daily_bonus',
+] as const;
+
+/** Knex `t.enum()` on Postgres is a CHECK, not pg_enum — ALTER TYPE is a no-op on existing tables. */
+async function ensureBalanceTransactionTypeCheck(): Promise<void> {
+  const list = BALANCE_TRANSACTION_TYPES.map((v) => `'${v}'`).join(', ');
+  await db.raw(`ALTER TABLE balance_transactions DROP CONSTRAINT IF EXISTS balance_transactions_type_check`);
+  await db.raw(`
+    ALTER TABLE balance_transactions
+    ADD CONSTRAINT balance_transactions_type_check
+    CHECK (type IN (${list}))
+  `);
 }
 
 async function addEnumValueIfMissing(_enumName: string, value: string): Promise<void> {

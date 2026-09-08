@@ -2,17 +2,30 @@ import { useMemo, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { ArrowLeft, Clock, Users, TrendingUp, Droplets, Share2 } from "lucide-react";
 import { motion } from "framer-motion";
-import { formatVolume } from "@/lib/mock-data";
+import { formatVolume } from "@/lib/money";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { PriceChart } from "@/components/PriceChart";
 import { TradePanel } from "@/components/TradePanel";
 import { useAuth } from "@/auth/AuthContext";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { getMarket, getMarketPriceLine, getMarketStats, updateMarketStatus, type BackendMarket, type MarketStats, type PriceLinePoint } from "@/api/markets";
+import {
+  addMarketComment,
+  deleteMarketComment,
+  getMarket,
+  getMarketPriceLine,
+  getMarketStats,
+  listMarketComments,
+  updateMarketStatus,
+  type BackendMarket,
+  type MarketStats,
+  type PriceLinePoint,
+} from "@/api/markets";
 import { formatDateToLocaleDateString, formatRelativeTime } from "@/lib/date";
 import { useI18n } from "@/i18n/I18nContext";
 import { formatWx } from "@/lib/money";
+import { usePortfolioWebSocket } from "@/hooks/usePortfolioWebSocket";
+import { Button } from "@/components/ui/button";
 
 type RangeKey = "1D" | "1W" | "1M" | "All";
 
@@ -30,7 +43,9 @@ export default function MarketDetail() {
   const { request, user } = useAuth();
   const { language, locale } = useI18n();
   const [range, setRange] = useState<RangeKey>("1M");
+  const [commentBody, setCommentBody] = useState("");
   const queryClient = useQueryClient();
+  usePortfolioWebSocket({ enabled: !!marketId, marketIds: marketId ? [marketId] : [] });
 
   const marketQuery = useQuery({
     queryKey: ["market", marketId],
@@ -74,6 +89,25 @@ export default function MarketDetail() {
     keepPreviousData: true,
   });
 
+  const commentsQuery = useQuery({
+    queryKey: ["market-comments", marketId],
+    queryFn: () => listMarketComments(request, marketId),
+    enabled: !!marketId,
+  });
+
+  const commentMutation = useMutation({
+    mutationFn: (body: string) => addMarketComment(request, marketId, body),
+    onSuccess: () => {
+      setCommentBody("");
+      void queryClient.invalidateQueries({ queryKey: ["market-comments", marketId] });
+    },
+    onError: (err) => {
+      toast.error(typeof (err as { message?: string }).message === "string"
+        ? (err as { message: string }).message
+        : language === "ru" ? "Не удалось отправить комментарий" : "Failed to post comment");
+    },
+  });
+
   const market: BackendMarket | undefined = marketQuery.data;
   const stats: MarketStats | undefined = statsQuery.data;
 
@@ -115,6 +149,16 @@ export default function MarketDetail() {
     return (
       <AppLayout>
         <div className="text-center py-20 text-muted-foreground">{language === "ru" ? "Загрузка..." : "Loading..."}</div>
+      </AppLayout>
+    );
+  }
+
+  if (marketQuery.isError) {
+    return (
+      <AppLayout>
+        <div className="text-center py-20 text-destructive">
+          {language === "ru" ? "Не удалось загрузить рынок. Проверьте сеть и попробуйте снова." : "Failed to load the market. Check your connection and try again."}
+        </div>
       </AppLayout>
     );
   }
@@ -182,7 +226,18 @@ export default function MarketDetail() {
                   </span>
                 </div>
 
-                <button className="ml-auto p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors">
+                <button
+                  type="button"
+                  className="ml-auto p-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                  onClick={async () => {
+                    try {
+                      await navigator.clipboard.writeText(window.location.href);
+                      toast.success(language === "ru" ? "Ссылка скопирована" : "Link copied");
+                    } catch {
+                      toast.error(language === "ru" ? "Не удалось скопировать" : "Could not copy");
+                    }
+                  }}
+                >
                   <Share2 className="h-4 w-4" />
                 </button>
               </div>
@@ -260,6 +315,64 @@ export default function MarketDetail() {
                 ) : (
                   <div className="text-sm text-muted-foreground py-6 text-center">{language === "ru" ? "Сделок пока нет" : "No trades yet"}</div>
                 )}
+              </div>
+            </div>
+
+            <div className="rounded-xl bg-card border border-border/50 p-4">
+              <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Обсуждение" : "Discussion"}</h2>
+              {user ? (
+                <form
+                  className="mb-3 flex gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    if (commentBody.trim()) commentMutation.mutate(commentBody.trim());
+                  }}
+                >
+                  <input
+                    value={commentBody}
+                    onChange={(e) => setCommentBody(e.target.value)}
+                    maxLength={1000}
+                    placeholder={language === "ru" ? "Написать комментарий..." : "Write a comment..."}
+                    className="flex-1 bg-secondary rounded-lg px-3 py-2 text-sm outline-none"
+                  />
+                  <Button type="submit" size="sm" disabled={commentMutation.isPending || !commentBody.trim()}>
+                    {language === "ru" ? "Отправить" : "Post"}
+                  </Button>
+                </form>
+              ) : (
+                <p className="text-xs text-muted-foreground mb-3">
+                  <Link to="/login" className="underline">{language === "ru" ? "Войдите" : "Log in"}</Link>
+                  {language === "ru" ? ", чтобы комментировать." : " to comment."}
+                </p>
+              )}
+              <div className="space-y-3">
+                {(commentsQuery.data?.data ?? []).map((c) => (
+                  <div key={c.id} className="text-sm border-b border-border/30 pb-2 last:border-0">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-medium">@{c.user.username}</span>
+                      <span className="text-[10px] text-muted-foreground">{formatRelativeTime(c.createdAt)}</span>
+                    </div>
+                    <p className="text-muted-foreground mt-0.5 whitespace-pre-wrap">{c.body}</p>
+                    {user && (user.id === c.user.id || user.role === "admin" || user.role === "moderator") ? (
+                      <button
+                        type="button"
+                        className="text-[11px] text-danger mt-1"
+                        onClick={() =>
+                          deleteMarketComment(request, marketId, c.id).then(() =>
+                            queryClient.invalidateQueries({ queryKey: ["market-comments", marketId] }),
+                          )
+                        }
+                      >
+                        {language === "ru" ? "Удалить" : "Delete"}
+                      </button>
+                    ) : null}
+                  </div>
+                ))}
+                {(commentsQuery.data?.data ?? []).length === 0 ? (
+                  <div className="text-xs text-muted-foreground py-4 text-center">
+                    {language === "ru" ? "Комментариев пока нет" : "No comments yet"}
+                  </div>
+                ) : null}
               </div>
             </div>
           </div>

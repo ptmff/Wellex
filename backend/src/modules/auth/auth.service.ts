@@ -333,4 +333,24 @@ export class AuthService {
   private hashToken(token: string): string {
     return crypto.createHash('sha256').update(token).digest('hex');
   }
+
+  async changePassword(userId: string, input: { currentPassword: string; newPassword: string }): Promise<void> {
+    const parsed = z
+      .object({
+        currentPassword: z.string().min(1),
+        newPassword: RegisterDto.shape.password,
+      })
+      .parse(input);
+
+    const user = await db('users').where('id', userId).first();
+    if (!user) throw new UnauthorizedError();
+
+    const ok = await bcrypt.compare(parsed.currentPassword, user.password_hash);
+    if (!ok) throw new UnauthorizedError('Current password is incorrect');
+
+    const passwordHash = await bcrypt.hash(parsed.newPassword, 12);
+    await db('users').where('id', userId).update({ password_hash: passwordHash, updated_at: new Date() });
+    await db('refresh_tokens').where({ user_id: userId }).update({ is_revoked: true });
+    logger.info('Password changed', { userId });
+  }
 }

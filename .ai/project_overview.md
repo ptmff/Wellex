@@ -63,6 +63,7 @@ Wellex/
 | Redis | Кэш, pub/sub для WS, BullMQ |
 | Polymarket Gamma API | Ежедневный ingest событий (`https://gamma-api.polymarket.com`) |
 | ЮKassa | Покупка пакетов WX (`YooKassaPaymentProvider`, webhook `/economy/webhooks/yookassa`) |
+| (опционально) Яндекс РСЯ | Rewarded-реклама за WX (`AD_PROVIDER=yandex` + `YANDEX_RTB_BLOCK_ID`); до модерации сайта — mock-таймер |
 | (опционально) ngrok | `allowedHosts` во Vite; публичный URL для webhook ЮKassa |
 
 ## Локальный запуск

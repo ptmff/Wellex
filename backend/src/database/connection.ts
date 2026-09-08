@@ -2,6 +2,8 @@ import Knex from 'knex';
 import { config } from '../config';
 import { logger } from '../common/logger';
 
+const useSsl = config.NODE_ENV === 'production' && config.DB_SSL !== false;
+
 export const db = Knex({
   client: 'pg',
   connection: {
@@ -10,7 +12,7 @@ export const db = Knex({
     database: config.DB_NAME,
     user: config.DB_USER,
     password: config.DB_PASSWORD,
-    ssl: config.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+    ssl: useSsl ? { rejectUnauthorized: config.DB_SSL_REJECT_UNAUTHORIZED } : false,
   },
   pool: {
     min: config.DB_POOL_MIN,

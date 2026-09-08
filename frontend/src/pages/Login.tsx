@@ -1,7 +1,7 @@
 import type { FormEvent } from "react";
 import { useMemo, useState } from "react";
 import { z } from "zod";
-import { useNavigate, Link } from "react-router-dom";
+import { useLocation, useNavigate, Link } from "react-router-dom";
 import { toast } from "sonner";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
@@ -17,8 +17,12 @@ const LoginSchema = z.object({
 
 export default function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { login, isLoading } = useAuth();
   const { language } = useI18n();
+  const returnTo = typeof (location.state as { from?: unknown } | null)?.from === "string"
+    ? (location.state as { from: string }).from
+    : "/portfolio";
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,7 +48,7 @@ export default function Login() {
     try {
       setSubmitting(true);
       await login(parsed.data);
-      navigate("/portfolio");
+      navigate(returnTo, { replace: true });
     } catch (err) {
       const maybe = err as { message?: unknown };
       const message = typeof maybe?.message === "string" ? maybe.message : language === "ru" ? "Не удалось войти" : "Login failed";

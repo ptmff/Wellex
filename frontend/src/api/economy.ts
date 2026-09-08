@@ -22,7 +22,25 @@ export type EconomyStatus = {
     rewardAmount: number;
     nextAt: string | null;
     reason: string | null;
+    reasonCode: "daily_limit" | "cooldown" | null;
+    provider: "mock" | "yandex" | string;
+    minWatchSeconds: number;
   };
+  daily: {
+    canClaim: boolean;
+    amount: number;
+    streak: number;
+    claimedOn: string | null;
+  };
+};
+
+export type AdSession = {
+  sessionId: string;
+  provider: "mock" | "yandex" | string;
+  blockId: string | null;
+  rewardAmount: number;
+  minWatchSeconds: number;
+  expiresInSeconds: number;
 };
 
 export type PurchaseResult = {
@@ -64,6 +82,21 @@ export async function getPurchase(request: AuthRequest, purchaseId: string) {
   });
 }
 
-export async function claimAdReward(request: AuthRequest) {
-  return request<AdRewardResult>("/economy/ad-reward", { method: "POST", authRequired: true });
+export async function startAdSession(request: AuthRequest) {
+  return request<AdSession>("/economy/ads/session", { method: "POST", authRequired: true });
+}
+
+export async function claimAdReward(request: AuthRequest, sessionId: string) {
+  return request<AdRewardResult>("/economy/ad-reward", {
+    method: "POST",
+    body: { sessionId },
+    authRequired: true,
+  });
+}
+
+export async function claimDailyBonus(request: AuthRequest) {
+  return request<{ wxAmount: number; currency: string; available: number; streak: number }>(
+    "/economy/daily-bonus",
+    { method: "POST", authRequired: true },
+  );
 }
