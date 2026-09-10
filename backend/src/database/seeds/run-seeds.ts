@@ -95,10 +95,15 @@ export async function runSeeds(): Promise<void> {
     const starting = (isBot ? config.BOT_USER_BALANCE : config.INITIAL_USER_BALANCE).toFixed(8);
 
     let userId: string;
-    const existing = await db('users').where('email', user.email).first();
+    const existing = await db('users')
+      .where('email', user.email)
+      .orWhere('username', user.username)
+      .first();
     if (existing) {
       userId = existing.id;
       await db('users').where('id', userId).update({
+        email: user.email,
+        username: user.username,
         is_bot: isBot,
         role: user.role,
         display_name: user.display_name,
