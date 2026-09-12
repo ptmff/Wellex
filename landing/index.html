@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ВЕЛЛЕКС — вероятность становится ценой</title>
+<meta name="description" content="Веллекс — платформа прогнозных рынков. Торгуйте вероятностями событий в реальном времени: биржевой стакан, портфель, лидерборд. Игровая валюта WX.">
+<meta name="theme-color" content="#12141a">
+<link rel="icon" href="assets/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="assets/logo-180.png">
+
+<meta property="og:type" content="website">
+<meta property="og:title" content="ВЕЛЛЕКС — вероятность становится ценой">
+<meta property="og:description" content="Платформа прогнозных рынков: торгуйте вероятностями событий в реальном времени.">
+<meta property="og:image" content="assets/logo.png">
+<meta name="twitter:card" content="summary_large_image">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;600;700;800&family=Roboto+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<style>
+/* ─────────────────────────────  БРЕНД-ТОКЕНЫ  ───────────────────────────── */
+:root{
+  --bg:        hsl(225 15% 8%);
+  --surface:   hsl(225 15% 11%);
+  --surface-2: hsl(225 14% 14%);
+  --fg:        hsl(210 20% 95%);
+  --muted:     hsl(215 12% 62%);
+  --dim:       hsl(215 12% 42%);
+  --accent:    hsl(160 84% 44%);
+  --accent-dim:hsl(160 84% 44% / .12);
+  --red:       hsl(0 72% 55%);
+  --red-dim:   hsl(0 72% 55% / .12);
+  --line:      hsl(210 20% 95% / .09);
+  --line-soft: hsl(210 20% 95% / .05);
+  --r:         4px;
+  --r-lg:      6px;
+  --sans:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  --mono:'Roboto Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  --maxw:1200px;
+  --ease:cubic-bezier(.2,.7,.3,1);
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+body{
+  margin:0;background:var(--bg);color:var(--fg);
+  font-family:var(--sans);font-weight:500;font-size:17px;line-height:1.6;
+  -webkit-font-smoothing:antialiased;overflow-x:hidden;
+}
+img{max-width:100%;display:block}
+a{color:inherit;text-decoration:none}
+h1,h2,h3{margin:0;font-weight:800;letter-spacing:-.02em;line-height:1.08}
+p{margin:0}
+::selection{background:var(--accent);color:hsl(225 15% 8%)}
+
+/* фоновая атмосфера */
+.bg-fx{position:fixed;inset:0;pointer-events:none;z-index:0}
+.bg-fx::before{
+  content:'';position:absolute;inset:0;
+  background-image:linear-gradient(var(--line-soft) 1px,transparent 1px),
+                   linear-gradient(90deg,var(--line-soft) 1px,transparent 1px);
+  background-size:88px 88px;
+  mask-image:radial-gradient(120% 80% at 50% 0%,#000 10%,transparent 75%);
+  -webkit-mask-image:radial-gradient(120% 80% at 50% 0%,#000 10%,transparent 75%);
+}
+.bg-fx::after{
+  content:'';position:absolute;top:-380px;left:50%;transform:translateX(-50%);
+  width:1100px;height:820px;border-radius:50%;
+  background:radial-gradient(closest-side,hsl(160 84% 44% / .16),transparent 70%);
+  filter:blur(30px);
+}
+.wrap{position:relative;z-index:1}
+.container{width:100%;max-width:var(--maxw);margin:0 auto;padding-inline:24px}
+
+/* служебные */
+.mono{font-family:var(--mono);font-weight:400}
+.eyebrow{
+  font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;
+  color:var(--dim);display:flex;align-items:center;gap:10px;
+}
+.eyebrow::before{content:'';width:22px;height:1px;background:var(--accent);opacity:.7}
+.muted{color:var(--muted)}
+.accent{color:var(--accent)}
+
+/* кнопки */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  font-family:var(--sans);font-weight:700;font-size:15px;letter-spacing:.01em;
+  padding:13px 24px;border-radius:100px;border:1px solid transparent;cursor:pointer;
+  transition:transform .25s var(--ease),background .25s var(--ease),border-color .25s var(--ease),box-shadow .25s var(--ease);
+  white-space:nowrap;
+}
+.btn:hover{transform:translateY(-2px)}
+.btn-primary{background:var(--accent);color:hsl(225 15% 8%);box-shadow:0 0 0 0 hsl(160 84% 44% / .35)}
+.btn-primary:hover{box-shadow:0 12px 34px -10px hsl(160 84% 44% / .65)}
+.btn-ghost{border-color:var(--line);color:var(--fg);background:hsl(210 20% 95% / .02)}
+.btn-ghost:hover{border-color:hsl(160 84% 44% / .55);color:var(--accent)}
+.btn-lg{padding:16px 30px;font-size:16px}
+
+/* ─────────────────────────────  ШАПКА  ───────────────────────────── */
+.nav{
+  position:sticky;top:0;z-index:50;
+  border-bottom:1px solid transparent;transition:.3s var(--ease);
+}
+.nav.scrolled{
+  background:hsl(225 15% 8% / .78);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  border-bottom-color:var(--line);
+}
+.nav-in{display:flex;align-items:center;justify-content:space-between;gap:24px;height:74px}
+.brand{display:flex;align-items:center;gap:12px}
+.brand img{width:38px;height:38px;object-fit:contain}
+.brand span{font-weight:700;font-size:19px;letter-spacing:.1em}
+.nav-links{display:flex;gap:30px;font-size:15px;font-weight:600;color:var(--muted)}
+.nav-links a{position:relative;transition:color .2s}
+.nav-links a::after{
+  content:'';position:absolute;left:0;right:100%;bottom:-6px;height:1px;
+  background:var(--accent);transition:right .3s var(--ease);
+}
+.nav-links a:hover{color:var(--fg)}
+.nav-links a:hover::after{right:0}
+.nav-cta{display:flex;align-items:center;gap:12px}
+
+/* ─────────────────────────────  ГЕРОЙ  ───────────────────────────── */
+.hero{padding:86px 0 40px}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:64px;align-items:center}
+.pill{
+  display:inline-flex;align-items:center;gap:9px;padding:7px 15px 7px 11px;
+  border:1px solid var(--line);border-radius:100px;
+  font-family:var(--mono);font-size:12.5px;color:var(--muted);letter-spacing:.03em;
+  background:hsl(210 20% 95% / .02);
+}
+.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 0 0 hsl(160 84% 44% / .6);animation:pulse 2.4s infinite}
+@keyframes pulse{
+  0%{box-shadow:0 0 0 0 hsl(160 84% 44% / .55)}
+  70%{box-shadow:0 0 0 8px hsl(160 84% 44% / 0)}
+  100%{box-shadow:0 0 0 0 hsl(160 84% 44% / 0)}
+}
+.hero h1{font-size:clamp(42px,6.1vw,74px);margin:26px 0 0}
+.hero h1 .gl{
+  background:linear-gradient(96deg,var(--accent),hsl(168 70% 68%));
+  -webkit-background-clip:text;background-clip:text;color:transparent;
+}
+.hero-sub{margin-top:22px;font-size:19px;color:var(--muted);max-width:520px;line-height:1.62}
+.hero-actions{display:flex;flex-wrap:wrap;gap:14px;margin-top:34px}
+.hero-note{margin-top:18px;font-family:var(--mono);font-size:12.5px;color:var(--dim);letter-spacing:.02em}
+
+/* карточка рынка */
+.card{
+  background:var(--surface);border:1px solid var(--line);border-radius:var(--r-lg);
+}
+.market-card{padding:26px;position:relative;overflow:hidden;box-shadow:0 40px 90px -50px #000}
+.market-card::before{
+  content:'';position:absolute;inset:0;pointer-events:none;
+  background:radial-gradient(90% 60% at 100% 0%,hsl(160 84% 44% / .09),transparent 60%);
+}
+.mc-top{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;position:relative}
+.tag{
+  font-family:var(--mono);font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--accent);border:1px solid hsl(160 84% 44% / .35);background:var(--accent-dim);
+  padding:4px 10px;border-radius:100px;
+}
+.mc-q{font-size:21px;font-weight:700;line-height:1.32;margin-top:18px;letter-spacing:-.01em}
+.mc-price{display:flex;align-items:baseline;gap:12px;margin-top:20px}
+.mc-price b{font-family:var(--mono);font-weight:500;font-size:44px;letter-spacing:-.02em;color:var(--accent)}
+.chg{font-family:var(--mono);font-size:13px;color:var(--accent);background:var(--accent-dim);padding:3px 9px;border-radius:100px}
+.spark{margin:16px -4px 4px;height:78px;width:calc(100% + 8px)}
+.bar{height:8px;border-radius:100px;background:var(--red-dim);overflow:hidden;display:flex;margin-top:6px}
+.bar i{display:block;height:100%;background:var(--accent);border-radius:100px;width:0;transition:width 1.6s var(--ease)}
+.bar-legend{display:flex;justify-content:space-between;font-family:var(--mono);font-size:12.5px;margin-top:10px}
+.mc-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:20px}
+.side{
+  font-family:var(--mono);font-size:14px;padding:13px;border-radius:var(--r);text-align:center;
+  border:1px solid;transition:.22s var(--ease);cursor:default;
+}
+.side-yes{color:var(--accent);border-color:hsl(160 84% 44% / .35);background:var(--accent-dim)}
+.side-yes:hover{background:hsl(160 84% 44% / .2)}
+.side-no{color:var(--red);border-color:hsl(0 72% 55% / .3);background:var(--red-dim)}
+.side-no:hover{background:hsl(0 72% 55% / .2)}
+.mc-foot{
+  display:flex;justify-content:space-between;margin-top:18px;padding-top:16px;
+  border-top:1px solid var(--line);font-family:var(--mono);font-size:12px;color:var(--dim);
+}
+
+/* ─────────────────────────────  БЕГУЩАЯ СТРОКА  ───────────────────────────── */
+.ticker{
+  border-block:1px solid var(--line);margin-top:64px;overflow:hidden;
+  background:hsl(225 15% 10% / .5);
+  mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent);
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 7%,#000 93%,transparent);
+}
+.ticker-track{display:flex;width:max-content;animation:slide 46s linear infinite}
+.ticker:hover .ticker-track{animation-play-state:paused}
+@keyframes slide{to{transform:translateX(-50%)}}
+.tick{
+  display:flex;align-items:center;gap:12px;padding:15px 26px;
+  border-right:1px solid var(--line-soft);font-size:14.5px;white-space:nowrap;color:var(--muted);
+}
+.tick b{font-family:var(--mono);font-weight:500;font-size:14px;color:var(--fg)}
+.tick .up{color:var(--accent)}
+.tick .down{color:var(--red)}
+
+/* ─────────────────────────────  СЕКЦИИ  ───────────────────────────── */
+section{padding:110px 0;position:relative}
+.sec-head{max-width:680px;margin-bottom:54px}
+.sec-head h2{font-size:clamp(30px,4vw,46px);margin-top:18px}
+.sec-head p{margin-top:18px;font-size:18px;color:var(--muted)}
+
+/* статистика */
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.stat{background:var(--bg);padding:32px 26px}
+.stat b{display:block;font-family:var(--mono);font-weight:500;font-size:40px;letter-spacing:-.02em;color:var(--fg)}
+.stat span{display:block;margin-top:8px;font-size:14px;color:var(--muted)}
+
+/* шаги */
+.steps{display:grid;grid-template-columns:repeat(3,1fr);gap:24px}
+.step{padding:32px;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--surface);position:relative;overflow:hidden;transition:.35s var(--ease)}
+.step:hover{border-color:hsl(160 84% 44% / .4);transform:translateY(-4px)}
+.step-n{font-family:var(--mono);font-size:13px;color:var(--accent);letter-spacing:.12em}
+.step h3{font-size:21px;margin:16px 0 12px}
+.step p{color:var(--muted);font-size:15.5px}
+.step::after{
+  content:'';position:absolute;right:-40px;bottom:-60px;width:160px;height:160px;border-radius:50%;
+  background:radial-gradient(closest-side,hsl(160 84% 44% / .14),transparent);opacity:0;transition:opacity .35s
+}
+.step:hover::after{opacity:1}
+
+/* возможности */
+.features{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r-lg);overflow:hidden}
+.feat{background:var(--bg);padding:36px 30px;transition:background .3s var(--ease)}
+.feat:hover{background:var(--surface)}
+.feat-ico{
+  width:42px;height:42px;border-radius:var(--r);display:grid;place-items:center;
+  border:1px solid hsl(160 84% 44% / .3);background:var(--accent-dim);color:var(--accent);margin-bottom:20px;
+}
+.feat h3{font-size:18px;margin-bottom:10px}
+.feat p{color:var(--muted);font-size:15px}
+
+/* сплит-секция */
+.split{display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center}
+.lb{padding:8px;border-radius:var(--r-lg);border:1px solid var(--line);background:var(--surface);box-shadow:0 40px 90px -55px #000}
+.lb-row{display:flex;align-items:center;gap:16px;padding:15px 18px;border-radius:var(--r);transition:background .25s}
+.lb-row+.lb-row{border-top:1px solid var(--line-soft)}
+.lb-row:hover{background:hsl(210 20% 95% / .03)}
+.lb-rank{font-family:var(--mono);font-size:13px;color:var(--dim);width:24px}
+.lb-av{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,hsl(160 84% 44% / .35),hsl(190 84% 46% / .2));border:1px solid var(--line);display:grid;place-items:center;font-size:13px;font-weight:700}
+.lb-name{flex:1;font-weight:600;font-size:15px}
+.lb-val{font-family:var(--mono);font-size:14px;color:var(--accent)}
+.lb-row.top .lb-rank{color:var(--accent)}
+.checklist{list-style:none;padding:0;margin:26px 0 0;display:flex;flex-direction:column;gap:14px}
+.checklist li{display:flex;gap:13px;align-items:flex-start;color:var(--muted);font-size:16px}
+.checklist svg{flex-shrink:0;margin-top:4px;color:var(--accent)}
+
+/* FAQ */
+.faq{border-top:1px solid var(--line)}
+details{border-bottom:1px solid var(--line);padding:0}
+summary{
+  list-style:none;cursor:pointer;padding:24px 0;display:flex;justify-content:space-between;
+  align-items:center;gap:24px;font-size:18px;font-weight:700;letter-spacing:-.01em;transition:color .2s
+}
+summary::-webkit-details-marker{display:none}
+summary:hover{color:var(--accent)}
+summary .pm{
+  flex-shrink:0;width:26px;height:26px;border:1px solid var(--line);border-radius:50%;
+  display:grid;place-items:center;font-family:var(--mono);font-size:16px;color:var(--muted);transition:.3s var(--ease)
+}
+details[open] summary .pm{transform:rotate(45deg);border-color:var(--accent);color:var(--accent)}
+details p{padding:0 46px 26px 0;color:var(--muted);font-size:16px}
+
+/* финальный CTA */
+.cta-box{
+  border:1px solid var(--line);border-radius:var(--r-lg);padding:72px 48px;text-align:center;
+  background:
+    radial-gradient(80% 120% at 50% 0%,hsl(160 84% 44% / .13),transparent 62%),
+    var(--surface);
+  position:relative;overflow:hidden;
+}
+.cta-box img{width:78px;height:78px;object-fit:contain;margin:0 auto 24px}
+.cta-box h2{font-size:clamp(30px,4.4vw,50px)}
+.cta-box p{margin:20px auto 0;max-width:520px;color:var(--muted);font-size:18px}
+.cta-actions{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
+
+/* подвал */
+footer{border-top:1px solid var(--line);padding:56px 0 40px;margin-top:0}
+.foot-top{display:flex;justify-content:space-between;gap:40px;flex-wrap:wrap}
+.foot-brand{max-width:320px}
+.foot-brand p{margin-top:16px;color:var(--dim);font-size:14.5px}
+.foot-cols{display:flex;gap:64px;flex-wrap:wrap}
+.foot-col h4{font-family:var(--mono);font-weight:400;font-size:12px;letter-spacing:.12em;color:var(--dim);text-transform:uppercase;margin:0 0 16px}
+.foot-col a{display:block;font-size:15px;color:var(--muted);margin-bottom:11px;transition:color .2s}
+.foot-col a:hover{color:var(--accent)}
+.foot-bot{
+  margin-top:48px;padding-top:26px;border-top:1px solid var(--line-soft);
+  display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;
+  font-family:var(--mono);font-size:12px;color:var(--dim);
+}
+.disclaimer{max-width:640px;line-height:1.7}
+
+/* появление при скролле */
+.rv{opacity:0;transform:translateY(22px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
+.rv.in{opacity:1;transform:none}
+
+/* ─────────────────────────────  АДАПТИВ  ───────────────────────────── */
+@media (max-width:960px){
+  .hero-grid,.split{grid-template-columns:1fr;gap:44px}
+  .steps,.features{grid-template-columns:1fr 1fr}
+  .stats{grid-template-columns:1fr 1fr}
+  .nav-links{display:none}
+  section{padding:80px 0}
+}
+@media (max-width:640px){
+  body{font-size:16px}
+  .container{padding-inline:18px}
+  .hero{padding:52px 0 20px}
+  .steps,.features,.stats{grid-template-columns:1fr}
+  .nav-cta .btn-ghost{display:none}
+  .cta-box{padding:52px 22px}
+  .mc-price b{font-size:36px}
+  .foot-cols{gap:36px}
+  section{padding:68px 0}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+  .rv{opacity:1;transform:none}
+  html{scroll-behavior:auto}
+}
+</style>
+</head>
+<body>
+<div class="bg-fx"></div>
+<div class="wrap">
+
+<!-- ═════════════ ШАПКА ═════════════ -->
+<header class="nav" id="nav">
+  <div class="container nav-in">
+    <a class="brand" href="#top">
+      <img src="assets/logo.png" alt="Веллекс" width="38" height="38">
+      <span>ВЕЛЛЕКС</span>
+    </a>
+    <nav class="nav-links">
+      <a href="#how">Как это работает</a>
+      <a href="#features">Возможности</a>
+      <a href="#markets">Рынки</a>
+      <a href="#faq">Вопросы</a>
+    </nav>
+    <div class="nav-cta">
+      <a class="btn btn-ghost" href="#cta">Войти</a>
+      <a class="btn btn-primary" href="#cta">Открыть рынок →</a>
+    </div>
+  </div>
+</header>
+
+<!-- ═════════════ ГЕРОЙ ═════════════ -->
+<main id="top">
+<div class="hero">
+  <div class="container hero-grid">
+    <div>
+      <span class="pill"><i class="dot"></i> Рынки обновляются в реальном времени</span>
+      <h1>Вероятность<br>становится <span class="gl">ценой</span>.</h1>
+      <p class="hero-sub">
+        Веллекс — платформа прогнозных рынков. Выбирайте исход события, покупайте долю
+        по текущей вероятности и закрывайте позицию, когда рынок согласится с вами.
+      </p>
+      <div class="hero-actions">
+        <a class="btn btn-primary btn-lg" href="#cta">Начать торговать</a>
+        <a class="btn btn-ghost btn-lg" href="#how">Как это работает</a>
+      </div>
+      <p class="hero-note">Игровая валюта WX · без вложений на старте · 18+</p>
+    </div>
+
+    <div class="card market-card" id="mcard">
+      <div class="mc-top">
+        <span class="tag">Технологии</span>
+        <span class="mono" style="font-size:12px;color:var(--dim)">Закрытие · 31.12</span>
+      </div>
+      <div class="mc-q">Выйдет ли новая модель ИИ до конца квартала?</div>
+
+      <div class="mc-price">
+        <b><span id="pv">62</span>%</b>
+        <span class="chg">▲ 4.5% за 24ч</span>
+      </div>
+
+      <svg class="spark" viewBox="0 0 340 78" fill="none" preserveAspectRatio="none" aria-hidden="true">
+        <defs>
+          <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%"  stop-color="hsl(160 84% 44%)" stop-opacity=".28"/>
+            <stop offset="100%" stop-color="hsl(160 84% 44%)" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="M0 62 L28 58 L56 64 L84 49 L112 54 L140 41 L168 45 L196 33 L224 37 L252 26 L280 30 L308 18 L340 12 L340 78 L0 78 Z" fill="url(#g)"/>
+        <path id="sparkline" d="M0 62 L28 58 L56 64 L84 49 L112 54 L140 41 L168 45 L196 33 L224 37 L252 26 L280 30 L308 18 L340 12"
+              stroke="hsl(160 84% 44%)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="340" cy="12" r="3.5" fill="hsl(160 84% 44%)"/>
+      </svg>
+
+      <div class="bar"><i id="bar"></i></div>
+      <div class="bar-legend">
+        <span class="accent">YES 62%</span>
+        <span style="color:var(--red)">NO 38%</span>
+      </div>
+
+      <div class="mc-actions">
+        <div class="side side-yes">Купить YES · 0.62 WX</div>
+        <div class="side side-no">Купить NO · 0.38 WX</div>
+      </div>
+
+      <div class="mc-foot">
+        <span>Объём 128 400 WX</span>
+        <span>Стакан · 214 ордеров</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- бегущая строка -->
+  <div class="ticker">
+    <div class="ticker-track" id="track"></div>
+  </div>
+</div>
+
+<!-- ═════════════ СТАТИСТИКА ═════════════ -->
+<section style="padding-top:84px">
+  <div class="container">
+    <div class="stats rv">
+      <div class="stat"><b data-count="1200" data-suffix="+">0</b><span>активных рынков</span></div>
+      <div class="stat"><b data-count="24" data-suffix="/7">0</b><span>торги без перерыва</span></div>
+      <div class="stat"><b data-count="180" data-suffix=" мс">0</b><span>обновление цены по WebSocket</span></div>
+      <div class="stat"><b data-count="0" data-suffix=" ₽">0</b><span>стоимость входа</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ КАК ЭТО РАБОТАЕТ ═════════════ -->
+<section id="how">
+  <div class="container">
+    <div class="sec-head rv">
+      <span class="eyebrow">01 — Как это работает</span>
+      <h2>Три шага от мнения<br>до позиции</h2>
+      <p>Цена доли — это и есть вероятность события по мнению рынка. Купили за 0.62 WX,
+         событие произошло — доля погашается за 1.00 WX.</p>
+    </div>
+    <div class="steps">
+      <div class="step rv">
+        <div class="step-n">ШАГ 01</div>
+        <h3>Выберите событие</h3>
+        <p>Политика, спорт, технологии, экономика и крипта. Сотни рынков с понятными
+           правилами расчёта и датой закрытия.</p>
+      </div>
+      <div class="step rv">
+        <div class="step-n">ШАГ 02</div>
+        <h3>Займите сторону</h3>
+        <p>YES или NO. Ордер уходит в биржевой стакан — по рынку или по своей цене.
+           Позиция видна в портфеле сразу.</p>
+      </div>
+      <div class="step rv">
+        <div class="step-n">ШАГ 03</div>
+        <h3>Заберите результат</h3>
+        <p>Продайте долю в любой момент по текущей цене или дождитесь расчёта
+           события и погашения по 1.00 WX.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ ВОЗМОЖНОСТИ ═════════════ -->
+<section id="features">
+  <div class="container">
+    <div class="sec-head rv">
+      <span class="eyebrow">02 — Возможности</span>
+      <h2>Биржевая механика,<br>человеческий интерфейс</h2>
+      <p>Под капотом — настоящий стакан заявок, WebSocket-поток и честный расчёт.
+         Сверху — интерфейс, в котором разберётся любой.</p>
+    </div>
+    <div class="features">
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 17l6-6 4 4 8-8"/><path d="M21 7v5h-5"/></svg></div>
+        <h3>Биржевой стакан</h3>
+        <p>Лимитные и рыночные ордера, реальная глубина и спред — не имитация цены.</p>
+      </div>
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+        <h3>Реальное время</h3>
+        <p>Цены, сделки и графики прилетают по WebSocket — страницу обновлять не нужно.</p>
+      </div>
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 012-2h4a2 2 0 012 2v2"/></svg></div>
+        <h3>Портфель и P&L</h3>
+        <p>Все позиции, средняя цена входа, прибыль и история сделок — на одном экране.</p>
+      </div>
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 2l2.4 6.9H21l-5.3 4 2 6.9-5.7-4.3L6.3 20l2-7-5.3-4h6.6z"/></svg></div>
+        <h3>Свои рынки</h3>
+        <p>Создайте вопрос с чёткими правилами — и пусть сообщество торгует вашей идеей.</p>
+      </div>
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.9"/></svg></div>
+        <h3>Лидерборд и сообщество</h3>
+        <p>Рейтинг трейдеров, комментарии к рынкам и уведомления о движении цены.</p>
+      </div>
+      <div class="feat rv">
+        <div class="feat-ico"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div>
+        <h3>Прозрачный расчёт</h3>
+        <p>Правила исхода описаны заранее, история цен открыта, комиссии без сюрпризов.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ РЫНКИ / ЛИДЕРБОРД ═════════════ -->
+<section id="markets">
+  <div class="container split">
+    <div class="rv">
+      <span class="eyebrow">03 — Соревнование</span>
+      <h2 style="font-size:clamp(30px,4vw,46px);margin-top:18px">Точность видна<br>в таблице</h2>
+      <p style="margin-top:18px;font-size:18px;color:var(--muted)">
+        Каждая сделка — ставка на собственную правоту. Веллекс считает её за вас
+        и показывает, кто действительно разбирается в теме.
+      </p>
+      <ul class="checklist">
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Ежедневный бонус WX за активность</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Сезонный рейтинг по доходности и точности</li>
+        <li><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M20 6L9 17l-5-5"/></svg> Публичный профиль со статистикой сделок</li>
+      </ul>
+      <div style="margin-top:34px"><a class="btn btn-primary" href="#cta">Занять место в таблице</a></div>
+    </div>
+
+    <div class="lb rv">
+      <div class="lb-row top"><span class="lb-rank">01</span><span class="lb-av">А</span><span class="lb-name">alpha_seeker</span><span class="lb-val">+248 910 WX</span></div>
+      <div class="lb-row top"><span class="lb-rank">02</span><span class="lb-av">М</span><span class="lb-name">market_mind</span><span class="lb-val">+201 455 WX</span></div>
+      <div class="lb-row top"><span class="lb-rank">03</span><span class="lb-av">Д</span><span class="lb-name">delta_one</span><span class="lb-val">+176 020 WX</span></div>
+      <div class="lb-row"><span class="lb-rank">04</span><span class="lb-av">Т</span><span class="lb-name">tail_risk</span><span class="lb-val">+134 780 WX</span></div>
+      <div class="lb-row"><span class="lb-rank">05</span><span class="lb-av">С</span><span class="lb-name">signal_hunter</span><span class="lb-val">+119 300 WX</span></div>
+      <div class="lb-row"><span class="lb-rank">06</span><span class="lb-av">В</span><span class="lb-name">vega_long</span><span class="lb-val">+98 640 WX</span></div>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ FAQ ═════════════ -->
+<section id="faq">
+  <div class="container">
+    <div class="sec-head rv">
+      <span class="eyebrow">04 — Вопросы</span>
+      <h2>Коротко о главном</h2>
+    </div>
+    <div class="faq rv">
+      <details open>
+        <summary>Что такое прогнозный рынок? <span class="pm">+</span></summary>
+        <p>Рынок, где торгуют исходами событий. Доля «YES» стоит от 0 до 1 WX, и её цена
+           равна вероятности события по мнению всех участников. Если событие произошло,
+           доля погашается по 1.00 WX, если нет — по нулю.</p>
+      </details>
+      <details>
+        <summary>WX — это реальные деньги? <span class="pm">+</span></summary>
+        <p>Нет. WX — внутренняя игровая валюта платформы. Стартовый баланс начисляется
+           бесплатно, ежедневный бонус тоже. Пополнение баланса WX — опция, а не условие игры.</p>
+      </details>
+      <details>
+        <summary>Как формируется цена? <span class="pm">+</span></summary>
+        <p>Через биржевой стакан: ваши заявки встречаются с заявками других участников.
+           Цена последней сделки и есть текущая вероятность. Никакого «казино-коэффициента».</p>
+      </details>
+      <details>
+        <summary>Можно ли выйти из позиции до события? <span class="pm">+</span></summary>
+        <p>Да, в любой момент. Продайте долю по рыночной цене или выставьте лимитную заявку
+           и зафиксируйте результат, не дожидаясь расчёта.</p>
+      </details>
+      <details>
+        <summary>Кто может создать рынок? <span class="pm">+</span></summary>
+        <p>Любой зарегистрированный пользователь. Опишите вопрос, источник истины и дату
+           закрытия — после проверки рынок появится в общем списке.</p>
+      </details>
+    </div>
+  </div>
+</section>
+
+<!-- ═════════════ ФИНАЛЬНЫЙ CTA ═════════════ -->
+<section id="cta" style="padding-top:40px">
+  <div class="container">
+    <div class="cta-box rv">
+      <img src="assets/logo.png" alt="Веллекс">
+      <h2>Вы уже знаете,<br>чем всё закончится?</h2>
+      <p>Регистрация занимает минуту. Стартовый баланс WX — сразу, первый рынок — следом.</p>
+      <div class="cta-actions">
+        <a class="btn btn-primary btn-lg" href="#">Создать аккаунт</a>
+        <a class="btn btn-ghost btn-lg" href="#">Посмотреть рынки</a>
+      </div>
+      <p class="mono" style="margin-top:26px;font-size:12px;color:var(--dim)">
+        Вероятность становится ценой.
+      </p>
+    </div>
+  </div>
+</section>
+</main>
+
+<!-- ═════════════ ПОДВАЛ ═════════════ -->
+<footer>
+  <div class="container">
+    <div class="foot-top">
+      <div class="foot-brand">
+        <div class="brand">
+          <img src="assets/logo.png" alt="Веллекс" width="38" height="38">
+          <span>ВЕЛЛЕКС</span>
+        </div>
+        <p>Платформа прогнозных рынков. Технологичный, премиальный, экспертный подход
+           к торговле вероятностями.</p>
+      </div>
+      <div class="foot-cols">
+        <div class="foot-col">
+          <h4>Продукт</h4>
+          <a href="#markets">Рынки</a>
+          <a href="#features">Возможности</a>
+          <a href="#how">Как это работает</a>
+          <a href="#cta">Лидерборд</a>
+        </div>
+        <div class="foot-col">
+          <h4>Компания</h4>
+          <a href="#">О нас</a>
+          <a href="#">Блог</a>
+          <a href="#faq">Поддержка</a>
+          <a href="mailto:hello@wellex.com">hello@wellex.com</a>
+        </div>
+        <div class="foot-col">
+          <h4>Правовое</h4>
+          <a href="#">Условия использования</a>
+          <a href="#">Политика конфиденциальности</a>
+          <a href="#">Правила рынков</a>
+        </div>
+      </div>
+    </div>
+    <div class="foot-bot">
+      <span class="disclaimer">
+        Торговля ведётся на игровую валюту WX и не является финансовой услугой,
+        инвестиционной рекомендацией или азартной игрой на реальные деньги. 18+.
+      </span>
+      <span>© 2026 ВЕЛЛЕКС</span>
+    </div>
+  </div>
+</footer>
+
+</div>
+
+<script>
+(function(){
+  /* шапка при скролле */
+  var nav = document.getElementById('nav');
+  var onScroll = function(){ nav.classList.toggle('scrolled', window.scrollY > 12); };
+  onScroll(); window.addEventListener('scroll', onScroll, {passive:true});
+
+  /* бегущая строка — дублируем список для бесшовного цикла */
+  var items = [
+    ['Ставка ЦБ снизится в этом квартале','64%','up'],
+    ['Биткоин выше $150k до конца года','38%','down'],
+    ['Новая модель ИИ выйдет до декабря','62%','up'],
+    ['Команда А выиграет чемпионат','27%','down'],
+    ['Запуск ракеты состоится по графику','81%','up'],
+    ['Инфляция ниже 5% по итогам года','44%','up'],
+    ['Курс евро выше 110 ₽','33%','down'],
+    ['Релиз игры перенесут','71%','up']
+  ];
+  var track = document.getElementById('track');
+  var html = items.map(function(i){
+    return '<div class="tick"><span>'+i[0]+'</span><b class="'+i[2]+'">'+
+           (i[2]==='up'?'▲':'▼')+' '+i[1]+'</b></div>';
+  }).join('');
+  track.innerHTML = html + html;
+
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  /* появление секций + счётчики */
+  var io = new IntersectionObserver(function(entries){
+    entries.forEach(function(e){
+      if(!e.isIntersecting) return;
+      e.target.classList.add('in');
+      e.target.querySelectorAll('[data-count]').forEach(count);
+      io.unobserve(e.target);
+    });
+  }, {threshold:.18, rootMargin:'0px 0px -40px 0px'});
+  document.querySelectorAll('.rv').forEach(function(el){ io.observe(el); });
+
+  function count(el){
+    var target = parseFloat(el.dataset.count), suffix = el.dataset.suffix || '';
+    if(reduced || !target){ el.textContent = fmt(target) + suffix; return; }
+    var start = performance.now(), dur = 1400;
+    (function tick(now){
+      var p = Math.min((now - start) / dur, 1);
+      var eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = fmt(Math.round(target * eased)) + suffix;
+      if(p < 1) requestAnimationFrame(tick);
+    })(start);
+  }
+  function fmt(n){ return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+
+  /* карточка рынка: заполнение шкалы + живой тик цены */
+  var bar = document.getElementById('bar'), pv = document.getElementById('pv');
+  setTimeout(function(){ bar.style.width = '62%'; }, 350);
+  if(!reduced){
+    setInterval(function(){
+      var v = 62 + (Math.random() * 1.6 - .8);
+      pv.textContent = v.toFixed(1);
+    }, 2600);
+  }
+})();
+</script>
+</body>
+</html>
