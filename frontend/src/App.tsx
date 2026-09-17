@@ -6,6 +6,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/auth/AuthContext";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
 import { I18nProvider } from "@/i18n/I18nContext";
+import { CookieConsentProvider } from "@/components/CookieBanner";
 import Index from "./pages/Index";
 import MarketDetail from "./pages/MarketDetail";
 import Portfolio from "./pages/Portfolio";
@@ -27,6 +28,7 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
+          <CookieConsentProvider />
           <BrowserRouter>
             <Routes>
               <Route path="/" element={<Index />} />
