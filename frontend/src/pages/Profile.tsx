@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { User, Settings, LogOut, Shield, Bell, ExternalLink } from "lucide-react";
+import { User, Settings, LogOut, Shield, Bell, ExternalLink, Scale } from "lucide-react";
+import { Link } from "react-router-dom";
+import { useCookieConsentActions } from "@/components/CookieBanner";
+import { legalRoutes } from "@/legal/config";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/auth/AuthContext";
 import type { PaginatedResult, PortfolioSummaryResponse, PortfolioTrade } from "@/lib/portfolio";
@@ -12,7 +15,8 @@ import { formatWx } from "@/lib/money";
 export default function Profile() {
   const { user, request, logout } = useAuth();
   const { language, setLanguage } = useI18n();
-  const [openPanel, setOpenPanel] = useState<"none" | "security" | "apps" | "prefs">("none");
+  const { openCookieSettings } = useCookieConsentActions();
+  const [openPanel, setOpenPanel] = useState<"none" | "security" | "apps" | "legal" | "prefs">("none");
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
@@ -244,6 +248,35 @@ export default function Profile() {
                     ? "Сторонние приложения пока не подключаются. ЮKassa и РСЯ настраиваются на сервере, не в аккаунте."
                     : "No third-party apps yet. YooKassa and ads are configured on the server, not per account."}
                 </p>
+              ) : null}
+              <button
+                type="button"
+                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
+                onClick={() => setOpenPanel(openPanel === "legal" ? "none" : "legal")}
+              >
+                <Scale className="h-4 w-4 text-muted-foreground" />
+                <div>
+                  <div className="text-sm font-medium">{language === "ru" ? "Правовая информация" : "Legal"}</div>
+                  <div className="text-[11px] text-muted-foreground">
+                    {language === "ru" ? "Документы и cookie" : "Documents and cookies"}
+                  </div>
+                </div>
+              </button>
+              {openPanel === "legal" ? (
+                <div className="px-3 pb-3 flex flex-col gap-2 text-xs">
+                  <Link to={legalRoutes.privacy.path} className="text-primary hover:underline">
+                    {language === "ru" ? legalRoutes.privacy.titleRu : legalRoutes.privacy.titleEn}
+                  </Link>
+                  <Link to={legalRoutes.terms.path} className="text-primary hover:underline">
+                    {language === "ru" ? legalRoutes.terms.titleRu : legalRoutes.terms.titleEn}
+                  </Link>
+                  <Link to={legalRoutes.cookies.path} className="text-primary hover:underline">
+                    {language === "ru" ? legalRoutes.cookies.titleRu : legalRoutes.cookies.titleEn}
+                  </Link>
+                  <button type="button" className="text-left text-primary hover:underline" onClick={openCookieSettings}>
+                    {language === "ru" ? "Настройки cookie" : "Cookie settings"}
+                  </button>
+                </div>
               ) : null}
               <button
                 type="button"

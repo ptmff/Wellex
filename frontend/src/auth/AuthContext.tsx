@@ -46,6 +46,8 @@ export type RegisterInput = {
   username: string;
   password: string;
   displayName?: string;
+  legalConsent: true;
+  legalDocsVersion: string;
 };
 
 export type LoginInput = {

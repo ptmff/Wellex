@@ -30,6 +30,7 @@
 | Order book | Expire рынка снимает ордера; LIMIT BUY синхронизирует legacy `available`/`reserved`; запрет self-trade |
 | Ingest | Intraday каждые 15 мин: цены Polymarket + requote MM; резолюция по `winner`/`outcome` |
 | Product | Daily bonus, комментарии, уведомления (колокол), leaderboard 7d/30d, `/payment/result`, поиск Navbar |
+| Legal (152-ФЗ) | Cookie-баннер, `/legal/*` (политика ПДн, соглашение, cookie, правила рынков), чекбокс и фиксация согласия при регистрации (`legal_consent_*`) |
 
 На хосте Windows порт **5433** может быть занят локальным Postgres; API в Docker ходит в `postgres:5432` внутри сети compose.
 

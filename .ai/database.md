@@ -24,7 +24,7 @@
 
 | Таблица | Назначение |
 |---------|------------|
-| `users` | Аккаунты, роли, lockout, **`is_bot`** |
+| `users` | Аккаунты, роли, lockout, **`is_bot`**, **`legal_consent_at`**, **`legal_docs_version`**, **`legal_consent_ip`** (152-ФЗ при регистрации) |
 | `refresh_tokens` | Хеши refresh, revoke, device |
 | `balances` | available/reserved/total + cash-колонки, `currency` default **WX**, `version` |
 | `balance_transactions` | Леджер: deposit, trade_*, fee, **purchase**, **ad_reward**, **signup_bonus**, **daily_bonus**, … |

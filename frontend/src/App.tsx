@@ -18,6 +18,7 @@ import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
 import Leaderboard from "./pages/Leaderboard";
 import PaymentResult from "./pages/PaymentResult";
+import LegalDocumentPage from "./pages/legal/LegalDocumentPage";
 
 const queryClient = new QueryClient();
 
@@ -28,8 +29,8 @@ const App = () => (
         <TooltipProvider>
           <Toaster />
           <Sonner />
-          <CookieConsentProvider />
           <BrowserRouter>
+            <CookieConsentProvider>
             <Routes>
               <Route path="/" element={<Index />} />
               <Route path="/market/:id" element={<MarketDetail />} />
@@ -78,9 +79,11 @@ const App = () => (
 
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
+              <Route path="/legal/:slug" element={<LegalDocumentPage />} />
 
               <Route path="*" element={<NotFound />} />
             </Routes>
+            </CookieConsentProvider>
           </BrowserRouter>
         </TooltipProvider>
       </AuthProvider>

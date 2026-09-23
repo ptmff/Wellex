@@ -497,6 +497,19 @@ export async function runMigrations(): Promise<void> {
     t.index(['user_id', 'read_at']);
   });
 
+  await db.schema.raw(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS legal_consent_at timestamptz;
+  `);
+  await db.schema.raw(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS legal_docs_version varchar(32);
+  `);
+  await db.schema.raw(`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS legal_consent_ip varchar(45);
+  `);
+
   logger.info('✅ Database migrations completed');
 }
 

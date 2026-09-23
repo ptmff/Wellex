@@ -9,9 +9,11 @@ import {
   ErrorCode,
   ConflictError,
   UnauthorizedError,
+  ValidationError,
 } from '../../common/errors';
 import { logger } from '../../common/logger';
 import { userCache } from '../../infrastructure/redis/cache.service';
+import { LEGAL_DOCS_VERSION } from '../../common/legal.constants';
 
 // ─────────────────────────────────────────────────────────────────
 // DTOs
@@ -31,6 +33,12 @@ export const RegisterDto = z.object({
     .regex(/[A-Z]/, 'Password must contain at least one uppercase letter')
     .regex(/[0-9]/, 'Password must contain at least one number'),
   displayName: z.string().min(1).max(100).optional(),
+  legalConsent: z.literal(true, {
+    errorMap: () => ({
+      message: 'You must accept the Terms of Use and Privacy Policy',
+    }),
+  }),
+  legalDocsVersion: z.string().min(1).max(32).optional(),
 });
 
 export const LoginDto = z.object({
@@ -71,8 +79,15 @@ const MAX_FAILED_ATTEMPTS = 5;
 const LOCK_DURATION_MINUTES = 15;
 
 export class AuthService {
-  async register(input: RegisterInput): Promise<AuthResult> {
+  async register(input: RegisterInput, ipAddress?: string): Promise<AuthResult> {
     const validated = RegisterDto.parse(input);
+
+    const docsVersion = validated.legalDocsVersion ?? LEGAL_DOCS_VERSION;
+    if (docsVersion !== LEGAL_DOCS_VERSION) {
+      throw new ValidationError(
+        `Legal documents version mismatch. Expected ${LEGAL_DOCS_VERSION}`,
+      );
+    }
 
     // Check for existing user
     const existingUser = await db('users')
@@ -98,6 +113,9 @@ export class AuthService {
           display_name: validated.displayName ?? validated.username,
           role: 'user',
           status: 'active',
+          legal_consent_at: db.fn.now(),
+          legal_docs_version: docsVersion,
+          legal_consent_ip: ipAddress ?? null,
         })
         .returning('*');
 

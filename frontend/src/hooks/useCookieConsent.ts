@@ -58,3 +58,8 @@ export function acceptCustom(consent: CookieConsent): ConsentState {
   saveConsentState(state);
   return state;
 }
+
+export function hasFunctionalConsent(): boolean {
+  const state = loadConsentState();
+  return state.status === "accepted" && state.consent.functional;
+}

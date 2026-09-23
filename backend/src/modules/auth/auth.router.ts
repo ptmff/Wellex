@@ -7,7 +7,7 @@ const authService = new AuthService();
 
 // POST /api/v1/auth/register
 router.post('/register', async (req: Request, res: Response) => {
-  const result = await authService.register(req.body);
+  const result = await authService.register(req.body, req.ip);
   res.status(201).json({ success: true, data: result });
 });
 

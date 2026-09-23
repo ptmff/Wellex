@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { hasFunctionalConsent } from "@/hooks/useCookieConsent";
 import { dictionaries, type Language } from "./translations";
 
 type I18nContextValue = {
@@ -16,6 +17,7 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>("ru");
 
   useEffect(() => {
+    if (!hasFunctionalConsent()) return;
     const stored = window.localStorage.getItem(STORAGE_KEY);
     if (stored === "ru" || stored === "en") {
       setLanguageState(stored);
@@ -24,7 +26,9 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
 
   const setLanguage = (nextLanguage: Language) => {
     setLanguageState(nextLanguage);
-    window.localStorage.setItem(STORAGE_KEY, nextLanguage);
+    if (hasFunctionalConsent()) {
+      window.localStorage.setItem(STORAGE_KEY, nextLanguage);
+    }
   };
 
   const value = useMemo<I18nContextValue>(() => {
