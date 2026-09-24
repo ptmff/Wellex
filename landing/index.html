@@ -297,6 +297,25 @@ footer{border-top:1px solid var(--line);padding:56px 0 40px;margin-top:0}
 }
 .disclaimer{max-width:640px;line-height:1.7}
 
+/* cookie + согласие на Метрику */
+.cookie-banner{
+  position:fixed;left:0;right:0;bottom:0;z-index:100;
+  border-top:1px solid var(--line);
+  background:hsl(225 15% 8% / .94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  padding:16px 0 calc(16px + env(safe-area-inset-bottom,0));
+  transform:translateY(100%);opacity:0;pointer-events:none;
+  transition:transform .35s var(--ease),opacity .35s var(--ease);
+}
+.cookie-banner.is-visible{transform:translateY(0);opacity:1;pointer-events:auto}
+.cookie-in{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px}
+.cookie-text{max-width:640px;font-size:14px;color:var(--muted);line-height:1.55}
+.cookie-text strong{display:block;color:var(--fg);font-size:15px;margin-bottom:4px;font-weight:700}
+.cookie-text a{color:var(--accent);text-decoration:underline;text-underline-offset:2px}
+.cookie-actions{display:flex;flex-wrap:wrap;gap:10px}
+.cookie-actions .btn{padding:10px 18px;font-size:14px}
+.btn-cookie-ghost{background:transparent;border-color:var(--line);color:var(--fg)}
+.btn-cookie-ghost:hover{border-color:hsl(160 84% 44% / .45);color:var(--accent)}
+
 /* появление при скролле */
 .rv{opacity:0;transform:translateY(22px);transition:opacity .7s var(--ease),transform .7s var(--ease)}
 .rv.in{opacity:1;transform:none}
@@ -624,6 +643,8 @@ footer{border-top:1px solid var(--line);padding:56px 0 40px;margin-top:0}
           <a href="/legal/terms">Условия использования</a>
           <a href="/legal/privacy">Политика конфиденциальности</a>
           <a href="/legal/market-rules">Правила рынков</a>
+          <a href="/legal/cookies">Политика cookie</a>
+          <a href="#" id="cookie-settings-link">Настройки cookie</a>
         </div>
       </div>
     </div>
@@ -636,6 +657,20 @@ footer{border-top:1px solid var(--line);padding:56px 0 40px;margin-top:0}
     </div>
   </div>
 </footer>
+
+<div class="cookie-banner" id="cookie-banner" role="region" aria-label="Уведомление об использовании cookie">
+  <div class="container cookie-in">
+    <div class="cookie-text">
+      <strong>Мы используем файлы cookie</strong>
+      Необходимые cookie нужны для работы сайта. Яндекс.Метрика (аналитика) подключается только с вашего согласия.
+      <a href="/legal/cookies">Политика cookie</a> · <a href="/legal/privacy">Политика конфиденциальности</a>
+    </div>
+    <div class="cookie-actions">
+      <button type="button" class="btn btn-cookie-ghost" id="cookie-reject">Только необходимые</button>
+      <button type="button" class="btn btn-primary" id="cookie-accept">Принять все</button>
+    </div>
+  </div>
+</div>
 
 </div>
 
@@ -701,5 +736,99 @@ footer{border-top:1px solid var(--line);padding:56px 0 40px;margin-top:0}
   }
 })();
 </script>
+<script>
+(function(){
+  var METRIKA_ID = 113005346;
+  var STORAGE_KEY = 'wellex-cookie-consent';
+  var banner = document.getElementById('cookie-banner');
+  var metrikaStarted = false;
+
+  function loadConsent(){
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return { status: 'pending' };
+      return JSON.parse(raw);
+    } catch (e) {
+      return { status: 'pending' };
+    }
+  }
+
+  function saveConsent(state){
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); } catch (e) {}
+  }
+
+  function analyticsAllowed(state){
+    return state && state.status === 'accepted' && state.consent && state.consent.analytics === true;
+  }
+
+  function showBanner(){
+    if (!banner) return;
+    banner.classList.add('is-visible');
+  }
+
+  function hideBanner(){
+    if (!banner) return;
+    banner.classList.remove('is-visible');
+  }
+
+  function initYandexMetrika(){
+    if (metrikaStarted || !METRIKA_ID) return;
+    metrikaStarted = true;
+    window.dataLayer = window.dataLayer || [];
+    (function(m,e,t,r,i,k,a){
+      m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+      m[i].l=1*new Date();
+      for (var j = 0; j < document.scripts.length; j++) { if (document.scripts[j].src === r) { return; } }
+      k=e.createElement(t);a=e.getElementsByTagName(t)[0];k.async=1;k.src=r;a.parentNode.insertBefore(k,a);
+    })(window, document, 'script', 'https://mc.yandex.ru/metrika/tag.js?id=' + METRIKA_ID, 'ym');
+
+    ym(METRIKA_ID, 'init', {
+      ssr: true,
+      webvisor: true,
+      clickmap: true,
+      ecommerce: 'dataLayer',
+      referrer: document.referrer,
+      url: location.href,
+      accurateTrackBounce: true,
+      trackLinks: true
+    });
+  }
+
+  function applyConsent(state){
+    saveConsent(state);
+    hideBanner();
+    if (analyticsAllowed(state)) initYandexMetrika();
+  }
+
+  function acceptAll(){
+    applyConsent({
+      status: 'accepted',
+      consent: { necessary: true, analytics: true, functional: true }
+    });
+  }
+
+  function rejectAnalytics(){
+    applyConsent({
+      status: 'accepted',
+      consent: { necessary: true, analytics: false, functional: false }
+    });
+  }
+
+  var consent = loadConsent();
+  if (consent.status === 'pending') showBanner();
+  else if (analyticsAllowed(consent)) initYandexMetrika();
+
+  var acceptBtn = document.getElementById('cookie-accept');
+  var rejectBtn = document.getElementById('cookie-reject');
+  var settingsLink = document.getElementById('cookie-settings-link');
+  if (acceptBtn) acceptBtn.addEventListener('click', acceptAll);
+  if (rejectBtn) rejectBtn.addEventListener('click', rejectAnalytics);
+  if (settingsLink) settingsLink.addEventListener('click', function(e){
+    e.preventDefault();
+    showBanner();
+  });
+})();
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/113005346" style="position:absolute;left:-9999px;" alt=""></div></noscript>
 </body>
 </html>
