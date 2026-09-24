@@ -63,3 +63,8 @@ export function hasFunctionalConsent(): boolean {
   const state = loadConsentState();
   return state.status === "accepted" && state.consent.functional;
 }
+
+export function hasAnalyticsConsent(): boolean {
+  const state = loadConsentState();
+  return state.status === "accepted" && state.consent.analytics;
+}

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useI18n } from "@/i18n/I18nContext";
 import { legalRoutes } from "@/legal/config";
 import { CookieSettingsDialog } from "./CookieSettingsDialog";
+import { YandexMetrikaTracker } from "@/analytics/YandexMetrikaTracker";
 import {
   acceptAll,
   acceptCustom,
@@ -127,6 +128,7 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
 
   return (
     <CookieConsentContext.Provider value={contextValue}>
+      <YandexMetrikaTracker consentState={consentState} />
       {children}
       <AnimatePresence>
         {showBanner ? (

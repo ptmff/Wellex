@@ -50,7 +50,7 @@ export const dictionaries: Record<Language, Dictionary> = {
       "Запоминают ваши предпочтения: тему, язык интерфейса и другие персональные настройки.",
     "cookie.category.analytics": "Аналитические",
     "cookie.category.analytics.desc":
-      "Помогают нам понять, как пользователи взаимодействуют с сайтом, чтобы улучшать его.",
+      "Яндекс.Метрика: статистика посещений, карта кликов и вебвизор (только после вашего согласия).",
   },
   en: {
     "nav.markets": "Markets",
@@ -98,6 +98,6 @@ export const dictionaries: Record<Language, Dictionary> = {
       "Remember your preferences such as theme, language, and other personal settings.",
     "cookie.category.analytics": "Analytics",
     "cookie.category.analytics.desc":
-      "Help us understand how users interact with the site so we can improve it.",
+      "Yandex Metrica: visit stats, click maps, and session replay (only with your consent).",
   },
 };
