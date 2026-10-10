@@ -24,7 +24,7 @@ export function ProtectedRoute({
   }
 
   if (staffOnly && !isStaffRole(user.role)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/markets" replace />;
   }
 
   return <>{children}</>;

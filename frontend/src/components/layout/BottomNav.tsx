@@ -9,7 +9,7 @@ export function BottomNav() {
   const { t } = useI18n();
   const { user } = useAuth();
   const items = [
-    { icon: Home, label: t("nav.markets"), path: "/" },
+    { icon: Home, label: t("nav.markets"), path: "/markets" },
     { icon: Briefcase, label: t("nav.portfolio"), path: "/portfolio" },
     { icon: Coins, label: t("nav.shop"), path: "/shop" },
     ...(isStaffRole(user?.role) ? [{ icon: PlusCircle, label: t("nav.create"), path: "/create" }] : []),

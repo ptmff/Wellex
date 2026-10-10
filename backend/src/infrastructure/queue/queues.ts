@@ -8,6 +8,8 @@ import { db } from '../../database/connection';
 const connection = {
   host: redisClient.options.host as string,
   port: redisClient.options.port as number,
+  password: redisClient.options.password,
+  db: redisClient.options.db,
 };
 
 // ─────────────────────────────────────────────────────────────────

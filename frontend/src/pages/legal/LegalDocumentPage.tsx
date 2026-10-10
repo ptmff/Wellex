@@ -13,13 +13,13 @@ export default function LegalDocumentPage() {
   const { language } = useI18n();
 
   if (!isLegalSlug(slug)) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/markets" replace />;
   }
 
   const meta = legalRoutes[slug];
   const doc = getLegalDocument(slug, language);
   if (!doc) {
-    return <Navigate to="/" replace />;
+    return <Navigate to="/markets" replace />;
   }
 
   const title = language === "ru" ? meta.titleRu : meta.titleEn;
@@ -30,7 +30,7 @@ export default function LegalDocumentPage() {
     <AppLayout>
       <article className="max-w-3xl mx-auto prose prose-sm dark:prose-invert">
         <p className="text-xs text-muted-foreground not-prose mb-2">
-          <Link to="/" className="text-primary hover:underline">
+          <Link to="/markets" className="text-primary hover:underline">
             {language === "ru" ? "← На главную" : "← Home"}
           </Link>
         </p>

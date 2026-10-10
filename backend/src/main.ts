@@ -221,8 +221,8 @@ async function bootstrap(): Promise<void> {
   }
 
   // ── Start HTTP server
-  httpServer.listen(config.PORT, () => {
-    logger.info(`🚀 Server running on port ${config.PORT}`, {
+  httpServer.listen(config.PORT, config.HOST, () => {
+    logger.info(`🚀 Server running on ${config.HOST}:${config.PORT}`, {
       env: config.NODE_ENV,
       apiBase: apiV1,
       paymentProvider: config.PAYMENT_PROVIDER,

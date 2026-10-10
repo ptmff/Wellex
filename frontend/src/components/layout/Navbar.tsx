@@ -20,7 +20,7 @@ export function Navbar() {
   const { language, setLanguage, t } = useI18n();
   const queryClient = useQueryClient();
   const navLinks = [
-    { label: t("nav.markets"), path: "/" },
+    { label: t("nav.markets"), path: "/markets" },
     { label: t("nav.portfolio"), path: "/portfolio" },
     { label: t("nav.shop"), path: "/shop" },
     { label: language === "ru" ? "Лидеры" : "Leaders", path: "/leaderboard" },
@@ -44,14 +44,14 @@ export function Navbar() {
   const submitSearch = (e: FormEvent) => {
     e.preventDefault();
     const q = search.trim();
-    navigate(q ? `/?q=${encodeURIComponent(q)}` : "/");
+    navigate(q ? `/markets?q=${encodeURIComponent(q)}` : "/markets");
     setSearchOpen(false);
   };
 
   return (
     <header className="sticky top-0 z-50 glass border-b border-border/30">
       <div className="container flex h-14 items-center justify-between gap-4">
-        <Link to="/" className="flex items-center gap-2 shrink-0">
+        <Link to="/markets" className="flex items-center gap-2 shrink-0">
           <div className="h-7 w-7 rounded-lg bg-primary flex items-center justify-center">
             <span className="text-primary-foreground font-bold text-sm">P</span>
           </div>

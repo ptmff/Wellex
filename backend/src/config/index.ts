@@ -7,6 +7,7 @@ const rawConfigSchema = z.object({
   // Server
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().default(3000),
+  HOST: z.string().default('0.0.0.0'),
   API_VERSION: z.string().default('v1'),
 
   // Database

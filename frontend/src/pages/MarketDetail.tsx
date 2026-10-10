@@ -176,7 +176,7 @@ export default function MarketDetail() {
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
         {/* Back */}
         <Link
-          to="/"
+          to="/markets"
           className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors mb-4"
         >
           <ArrowLeft className="h-4 w-4" /> {language === "ru" ? "Назад к рынкам" : "Back to markets"}
