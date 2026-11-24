@@ -1,15 +1,16 @@
+import { accountKey } from "@/auth/accountQueries";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { User, Settings, LogOut, Shield, Bell, ExternalLink, Scale } from "lucide-react";
+import { User, Settings, LogOut, Shield, ExternalLink, Scale } from "lucide-react";
 import { Link } from "react-router-dom";
-import { useCookieConsentActions } from "@/components/CookieBanner";
+import { useCookieConsentActions } from "@/hooks/useCookieConsentActions";
 import { legalRoutes } from "@/legal/config";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useAuth } from "@/auth/AuthContext";
+import { useAuth } from "@/auth/useAuth";
 import type { PaginatedResult, PortfolioSummaryResponse, PortfolioTrade } from "@/lib/portfolio";
 import { formatRelativeTime } from "@/lib/date";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 import { formatWx } from "@/lib/money";
 
 export default function Profile() {
@@ -22,7 +23,7 @@ export default function Profile() {
   const [pwdMsg, setPwdMsg] = useState<string | null>(null);
 
   const { data: portfolio, isLoading: isPortfolioLoading, isError, error } = useQuery({
-    queryKey: ["portfolio"],
+    queryKey: accountKey(user?.id, "portfolio"),
     queryFn: () => request<PortfolioSummaryResponse>("/portfolio", { method: "GET" }),
   });
 
@@ -32,7 +33,7 @@ export default function Profile() {
     isError: isTradesError,
     error: tradesError,
   } = useQuery({
-    queryKey: ["portfolio-trades", "profile", 1, 5],
+    queryKey: accountKey(user?.id, "portfolio-trades", "profile", 1, 5),
     queryFn: () =>
       request<PaginatedResult<PortfolioTrade>>("/portfolio/trades?page=1&limit=5", {
         method: "GET",
@@ -41,8 +42,8 @@ export default function Profile() {
   });
 
   const tradesErrorMessage = isTradesError
-    ? typeof (tradesError as { message?: unknown }).message === "string"
-      ? (tradesError as { message?: unknown }).message
+    ? typeof tradesError?.message === "string"
+      ? tradesError?.message
       : language === "ru"
         ? "Не удалось загрузить сделки"
         : "Failed to load trades"
@@ -50,8 +51,8 @@ export default function Profile() {
 
   const errorMessage =
     isError && error
-      ? typeof (error as { message?: unknown }).message === "string"
-        ? (error as { message?: unknown }).message
+      ? typeof error?.message === "string"
+        ? error?.message
         : language === "ru"
           ? "Не удалось загрузить портфель"
           : "Failed to load portfolio"
@@ -83,34 +84,34 @@ export default function Profile() {
         {/* User card */}
         <div className="rounded-xl bg-card border border-border/50 p-5 mb-6">
           <div className="flex items-center gap-4">
-            <div className="h-14 w-14 rounded-full bg-primary/15 flex items-center justify-center">
+            <div className="h-14 w-14 shrink-0 rounded-full bg-primary/15 flex items-center justify-center">
               <User className="h-6 w-6 text-primary" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">{user?.displayName ?? user?.username ?? (language === "ru" ? "Пользователь" : "User")}</h2>
-              <p className="text-xs text-muted-foreground">
+              <h2 className="text-lg font-semibold [overflow-wrap:anywhere]">{user?.displayName ?? user?.username ?? (language === "ru" ? "Пользователь" : "User")}</h2>
+              <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 @{user?.username ?? (language === "ru" ? "неизвестно" : "unknown")} • {user?.role ?? "user"}
               </p>
             </div>
           </div>
 
-          <div className="grid grid-cols-3 gap-3 mt-5" id="profile-notifications">
+          <div className="grid grid-cols-3 gap-1.5 mt-5 sm:gap-3">
             {isPortfolioLoading ? (
               <div className="col-span-3 text-center text-sm text-muted-foreground py-3">
                 {language === "ru" ? "Загрузка баланса…" : "Loading balance…"}
               </div>
             ) : (
               <>
-            <div className="text-center p-3 rounded-lg bg-secondary/50">
-              <div className="text-lg font-bold">{formatWx(stats.totalBalance)}</div>
+            <div className="min-w-0 text-center p-2 rounded-lg sm:p-3 bg-secondary/50">
+              <div className="text-base font-bold [overflow-wrap:anywhere] sm:text-lg">{portfolio ? formatWx(stats.totalBalance) : "—"}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
             </div>
-            <div className="text-center p-3 rounded-lg bg-secondary/50">
-              <div className={`text-lg font-bold ${totalPnlClass}`}>{totalPnlText}</div>
+            <div className="min-w-0 text-center p-2 rounded-lg sm:p-3 bg-secondary/50">
+              <div className={`text-base font-bold [overflow-wrap:anywhere] sm:text-lg ${totalPnlClass}`}>{portfolio ? totalPnlText : "—"}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Общий P&L" : "Total P&L"}</div>
             </div>
-            <div className="text-center p-3 rounded-lg bg-secondary/50">
-              <div className="text-lg font-bold">{stats.openPositions}</div>
+            <div className="min-w-0 text-center p-2 rounded-lg sm:p-3 bg-secondary/50">
+              <div className="text-base font-bold [overflow-wrap:anywhere] sm:text-lg">{portfolio ? stats.openPositions : "—"}</div>
               <div className="text-[11px] text-muted-foreground">{language === "ru" ? "Открытые позиции" : "Open Positions"}</div>
             </div>
               </>
@@ -163,21 +164,6 @@ export default function Profile() {
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Настройки" : "Settings"}</h2>
             <div className="space-y-1">
-              <button
-                type="button"
-                className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"
-                onClick={() => {
-                  document.getElementById("profile-notifications")?.scrollIntoView({ behavior: "smooth" });
-                }}
-              >
-                <Bell className="h-4 w-4 text-muted-foreground" />
-                <div>
-                  <div className="text-sm font-medium">{language === "ru" ? "Уведомления" : "Notifications"}</div>
-                  <div className="text-[11px] text-muted-foreground">
-                    {language === "ru" ? "Колокольчик в шапке: сделки и резолюции" : "Bell in the header: fills and resolutions"}
-                  </div>
-                </div>
-              </button>
               <button
                 type="button"
                 className="w-full flex items-center gap-3 p-3 rounded-lg text-left hover:bg-secondary/50 transition-colors"

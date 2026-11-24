@@ -1,7 +1,7 @@
 import { Link } from "react-router-dom";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 import { legalOperator, legalRoutes } from "@/legal/config";
-import { useCookieConsentActions } from "@/components/CookieBanner";
+import { useCookieConsentActions } from "@/hooks/useCookieConsentActions";
 
 export function SiteFooter() {
   const { language } = useI18n();
@@ -13,9 +13,9 @@ export function SiteFooter() {
       : "Trading uses in-game WX, not real money. 18+.";
 
   return (
-    <footer className="border-t border-border/60 bg-muted/20 mt-8 hidden md:block">
-      <div className="container py-8 pb-24 space-y-4">
-        <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs">
+    <footer className="border-t border-border/60 bg-muted/20 mt-6">
+      <div className="container space-y-4 py-5 lg:py-8">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs [&>a]:py-2 [&>button]:py-2">
           <Link to={legalRoutes.terms.path} className="text-muted-foreground hover:text-foreground">
             {language === "ru" ? legalRoutes.terms.titleRu : legalRoutes.terms.titleEn}
           </Link>

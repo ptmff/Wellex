@@ -1,16 +1,19 @@
+import { accountKey } from "@/auth/accountQueries";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { Coins, Play } from "lucide-react";
 import { Link, useSearchParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { QueryError } from "@/components/QueryError";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/auth/AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "@/auth/useAuth";
+import { useI18n } from "@/i18n/useI18n";
 import {
   claimAdReward,
   getEconomyStatus,
   getPurchase,
+  purchasePollInterval,
   listPackages,
   purchasePackage,
   startAdSession,
@@ -27,7 +30,7 @@ export default function Shop() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [adSession, setAdSession] = useState<AdSession | null>(null);
-  const returnToastRef = useRef(false);
+  const returnToastRef = useRef<string>();
 
   const pendingPurchaseId = searchParams.get("purchase");
 
@@ -38,44 +41,40 @@ export default function Shop() {
   });
 
   const statusQuery = useQuery({
-    queryKey: ["economy-me"],
+    queryKey: accountKey(user?.id, "economy-me"),
     queryFn: () => getEconomyStatus(request),
     enabled: !!request && !!user,
   });
 
   const returnPurchaseQuery = useQuery({
-    queryKey: ["economy-purchase", pendingPurchaseId],
+    queryKey: accountKey(user?.id, "economy-purchase", pendingPurchaseId),
     queryFn: () => getPurchase(request, pendingPurchaseId!),
     enabled: !!request && !!user && !!pendingPurchaseId,
-    refetchInterval: (query) => {
-      const status = query.state.data?.status;
-      if (status === "succeeded" || status === "failed") return false;
-      return 2000;
-    },
+    refetchInterval: ({ state }) => purchasePollInterval(state),
   });
 
   useEffect(() => {
     const result = returnPurchaseQuery.data;
-    if (!result || returnToastRef.current) return;
+    if (!pendingPurchaseId || !result || returnToastRef.current === pendingPurchaseId) return;
     if (result.status === "succeeded") {
-      returnToastRef.current = true;
+      returnToastRef.current = pendingPurchaseId;
       toast.success(
         language === "ru"
           ? `Зачислено ${formatWx(result.wxAmount)}`
           : `Credited ${formatWx(result.wxAmount)}`,
       );
-      void queryClient.invalidateQueries({ queryKey: ["economy-me"] });
-      void queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      void queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      void queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
+      void queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio") });
+      void queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio-balance-history") });
       setSearchParams({}, { replace: true });
       return;
     }
     if (result.status === "failed") {
-      returnToastRef.current = true;
+      returnToastRef.current = pendingPurchaseId;
       toast.error(language === "ru" ? "Оплата не прошла" : "Payment failed");
       setSearchParams({}, { replace: true });
     }
-  }, [language, queryClient, returnPurchaseQuery.data, setSearchParams]);
+  }, [language, pendingPurchaseId, queryClient, returnPurchaseQuery.data, setSearchParams, user?.id]);
 
   const buyMutation = useMutation({
     mutationFn: (slug: string) => purchasePackage(request, slug),
@@ -89,9 +88,9 @@ export default function Shop() {
           ? `Зачислено ${formatWx(result.wxAmount)}`
           : `Credited ${formatWx(result.wxAmount)}`,
       );
-      await queryClient.invalidateQueries({ queryKey: ["economy-me"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio") });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio-balance-history") });
     },
     onError: (err) => {
       const message = typeof (err as { message?: unknown }).message === "string"
@@ -115,7 +114,7 @@ export default function Shop() {
           ? "Реклама недоступна"
           : "Ad unavailable";
       toast.error(message);
-      void queryClient.invalidateQueries({ queryKey: ["economy-me"] });
+      void queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
     },
   });
 
@@ -128,9 +127,9 @@ export default function Shop() {
           ? `Награда ${formatWx(result.wxAmount)}`
           : `Reward ${formatWx(result.wxAmount)}`,
       );
-      await queryClient.invalidateQueries({ queryKey: ["economy-me"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio") });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio-balance-history") });
     },
     onError: (err) => {
       setAdSession(null);
@@ -140,7 +139,7 @@ export default function Shop() {
           ? "Награда недоступна"
           : "Reward unavailable";
       toast.error(message);
-      void queryClient.invalidateQueries({ queryKey: ["economy-me"] });
+      void queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
     },
   });
 
@@ -152,8 +151,8 @@ export default function Shop() {
           ? `Ежедневный бонус ${formatWx(result.wxAmount)} · серия ${result.streak}`
           : `Daily bonus ${formatWx(result.wxAmount)} · streak ${result.streak}`,
       );
-      await queryClient.invalidateQueries({ queryKey: ["economy-me"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "economy-me") });
+      await queryClient.invalidateQueries({ queryKey: accountKey(user?.id, "portfolio") });
     },
     onError: (err) => {
       const message = typeof (err as { message?: unknown }).message === "string"
@@ -170,7 +169,7 @@ export default function Shop() {
   const isRealAdNetwork = status?.ad.provider === "yandex";
   const canStartAd = !!user && !!status?.ad.canWatch && !adSession
     && !adSessionMutation.isPending && !adClaimMutation.isPending;
-  const waitingReturn = !!pendingPurchaseId && returnPurchaseQuery.data?.status === "pending";
+
 
   const adUnavailableText = status?.ad.reasonCode === "daily_limit"
     ? language === "ru" ? "Дневной лимит наград исчерпан" : "Daily ad reward limit reached"
@@ -188,24 +187,42 @@ export default function Shop() {
             : "In-game currency for the order book. The welcome bonus is granted once. If you run out, buy WX or watch an ad."}
         </p>
 
-        {waitingReturn ? (
-          <div className="rounded-xl border border-border/50 bg-card p-4 mb-6 text-sm">
-            {language === "ru"
-              ? "Проверяем оплату в ЮKassa…"
-              : "Checking YooKassa payment…"}
+        {pendingPurchaseId && (
+          <div className="mb-6 space-y-2">
+            {returnPurchaseQuery.isError ? (
+              <QueryError
+                message={language === "ru" ? "Не удалось проверить оплату. Статус пока неизвестен." : "Could not verify the payment. Its status is unknown."}
+                retry={() => void returnPurchaseQuery.refetch()}
+                busy={returnPurchaseQuery.isFetching}
+              />
+            ) : returnPurchaseQuery.isPending ? (
+              <p role="status" className="text-sm text-muted-foreground">{language === "ru" ? "Проверяем оплату…" : "Checking payment…"}</p>
+            ) : (
+              <Button asChild variant="outline" className="min-h-11">
+                <Link to={`/payment/result?purchase=${encodeURIComponent(pendingPurchaseId)}`}>
+                  {language === "ru" ? "Открыть статус платежа" : "View payment status"}
+                </Link>
+              </Button>
+            )}
           </div>
-        ) : null}
-
-        {statusQuery.isError || packagesQuery.isError ? (
-          <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 mb-6 text-sm text-destructive">
-            {language === "ru" ? "Не удалось загрузить магазин. Попробуйте обновить страницу." : "Failed to load the shop. Refresh the page."}
+        )}
+        {(statusQuery.isError || packagesQuery.isError) && (
+          <div className="mb-6">
+            <QueryError
+              message={language === "ru" ? "Не удалось обновить данные магазина." : "Could not update the shop."}
+              retry={() => {
+                if (statusQuery.isError) void statusQuery.refetch();
+                if (packagesQuery.isError) void packagesQuery.refetch();
+              }}
+              busy={statusQuery.isFetching || packagesQuery.isFetching}
+            />
           </div>
-        ) : null}
+        )}
 
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
           <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Доступно" : "Available"}</div>
           <div className="text-2xl font-bold">
-            {statusQuery.isLoading ? "…" : formatWx(status?.available ?? 0)}
+            {statusQuery.isLoading ? "…" : status ? formatWx(status.available) : "—"}
           </div>
         </div>
 
@@ -213,7 +230,7 @@ export default function Shop() {
           <div>
             <div className="text-sm font-semibold">{language === "ru" ? "Ежедневный бонус" : "Daily bonus"}</div>
             <div className="text-xs text-muted-foreground">
-              {formatWx(status?.daily.amount ?? 25, { digits: 0 })}
+              {status ? formatWx(status.daily.amount, { digits: 0 }) : "—"}
               {status?.daily.streak ? ` · ${language === "ru" ? "серия" : "streak"} ${status.daily.streak}` : ""}
             </div>
           </div>
@@ -221,13 +238,17 @@ export default function Shop() {
             disabled={!user || !status?.daily.canClaim || dailyMutation.isPending}
             onClick={() => dailyMutation.mutate()}
           >
-            {status?.daily.canClaim
+            {!status ? "—" : status.daily.canClaim
               ? language === "ru" ? "Забрать" : "Claim"
               : language === "ru" ? "Уже сегодня" : "Claimed today"}
           </Button>
         </div>
 
         <h2 className="text-sm font-semibold mb-3">{language === "ru" ? "Пакеты" : "Packages"}</h2>
+        {packagesQuery.isLoading && <p role="status" className="mb-4 text-sm text-muted-foreground">{language === "ru" ? "Загружаем пакеты…" : "Loading packages…"}</p>}
+        {packagesQuery.isSuccess && packagesQuery.data.length === 0 && (
+          <p className="mb-4 text-sm text-muted-foreground">{language === "ru" ? "Пока нет доступных пакетов." : "No packages are available yet."}</p>
+        )}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-8">
           {(packagesQuery.data ?? []).map((pack) => (
             <div key={pack.id} className="rounded-xl bg-card border border-border/50 p-4 flex flex-col">

@@ -1,73 +1,74 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { getPurchase, purchasePollInterval } from "@/api/economy";
+import { accountKey, invalidatePortfolio } from "@/auth/accountQueries";
+import { useAuth } from "@/auth/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
+import { QueryError } from "@/components/QueryError";
 import { Button } from "@/components/ui/button";
-import { useAuth } from "@/auth/AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
-import { getPurchase } from "@/api/economy";
+import { useI18n } from "@/i18n/useI18n";
 import { formatWx } from "@/lib/money";
 
 export default function PaymentResult() {
   const { request, user } = useAuth();
+  const userId = user?.id;
   const { language } = useI18n();
+  const ru = language === "ru";
   const [params] = useSearchParams();
-  const purchaseId = params.get("purchase");
-  const queryClient = useQueryClient();
-  const done = useRef(false);
-
+  const purchaseId = params.get("purchase")?.trim();
+  const client = useQueryClient();
   const query = useQuery({
-    queryKey: ["economy-purchase", purchaseId],
+    queryKey: accountKey(userId, "economy-purchase", purchaseId),
     queryFn: () => getPurchase(request, purchaseId!),
-    enabled: !!request && !!user && !!purchaseId,
-    refetchInterval: (q) => {
-      const status = q.state.data?.status;
-      if (status === "succeeded" || status === "failed") return false;
-      return 2000;
-    },
+    enabled: !!userId && !!purchaseId,
+    refetchInterval: ({ state }) => purchasePollInterval(state),
   });
+  const purchase = query.data;
+  const status = purchase?.status;
 
   useEffect(() => {
-    if (!query.data || done.current) return;
-    if (query.data.status === "succeeded" || query.data.status === "failed") {
-      done.current = true;
-      void queryClient.invalidateQueries({ queryKey: ["economy-me"] });
-      void queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-    }
-  }, [query.data, queryClient]);
+    if (status !== "succeeded") return;
+    void client.invalidateQueries({ queryKey: accountKey(userId, "economy-me") });
+    void invalidatePortfolio(client, userId);
+  }, [client, purchaseId, status, userId]);
 
-  const status = query.data?.status;
-  const title =
-    status === "succeeded"
-      ? language === "ru" ? "Оплата прошла" : "Payment succeeded"
-      : status === "failed"
-        ? language === "ru" ? "Оплата не прошла" : "Payment failed"
-        : language === "ru" ? "Проверяем оплату…" : "Checking payment…";
+  const title = status === "succeeded"
+    ? ru ? "Оплата прошла" : "Payment succeeded"
+    : status === "failed"
+      ? ru ? "Оплата не прошла" : "Payment failed"
+      : ru ? "Статус оплаты" : "Payment status";
 
   return (
     <AppLayout>
-      <div className="max-w-md mx-auto rounded-xl border border-border/50 bg-card p-6 text-center">
-        <h1 className="text-xl font-bold mb-2">{title}</h1>
-        {status === "succeeded" ? (
-          <p className="text-sm text-muted-foreground mb-4">
-            {language === "ru" ? "Зачислено" : "Credited"} {formatWx(query.data?.wxAmount ?? 0)}
-          </p>
+      <div className="mx-auto max-w-md space-y-4 rounded-xl border border-border/50 bg-card p-5">
+        <h1 className="text-xl font-bold">{title}</h1>
+        {purchase?.status === "succeeded" ? (
+          <p className="text-sm text-muted-foreground">{ru ? "Зачислено" : "Credited"} {formatWx(purchase.wxAmount)}</p>
         ) : status === "failed" ? (
-          <p className="text-sm text-muted-foreground mb-4">
-            {language === "ru" ? "Деньги не списаны, можно попробовать снова в магазине." : "Nothing was charged. You can try again in the shop."}
-          </p>
+          <p className="text-sm text-muted-foreground">{ru ? "Зачисление по этому платежу не подтверждено." : "Credit for this payment was not confirmed."}</p>
         ) : !purchaseId ? (
-          <p className="text-sm text-muted-foreground mb-4">
-            {language === "ru" ? "Нет идентификатора платежа." : "Missing payment id."}
-          </p>
+          <p className="text-sm text-muted-foreground">{ru ? "В ссылке нет идентификатора платежа." : "The payment link is missing its ID."}</p>
+        ) : query.isError ? (
+          <QueryError
+            message={ru ? "Не удалось проверить оплату. Статус платежа пока неизвестен." : "Could not verify the payment. Its status is unknown."}
+            retry={() => void query.refetch()}
+            busy={query.isFetching}
+          />
+        ) : query.isPending ? (
+          <p role="status" className="text-sm text-muted-foreground">{ru ? "Проверяем оплату…" : "Checking payment…"}</p>
         ) : (
-          <p className="text-sm text-muted-foreground mb-4">
-            {language === "ru" ? "ЮKassa ещё подтверждает платёж." : "YooKassa is still confirming the payment."}
-          </p>
+          <>
+            <p role="status" className="text-sm text-muted-foreground">
+              {status === "pending" ? ru ? "Платёж ожидает подтверждения." : "Payment is awaiting confirmation."
+                : ru ? "Статус платежа пока неизвестен." : "The payment status is unknown."}
+            </p>
+            <Button variant="outline" className="min-h-11" disabled={query.isFetching} onClick={() => void query.refetch()}>
+              {ru ? "Проверить статус" : "Check status"}
+            </Button>
+          </>
         )}
-        <Button asChild>
-          <Link to="/shop">{language === "ru" ? "В магазин" : "Back to shop"}</Link>
-        </Button>
+        <div><Button asChild className="min-h-11"><Link to="/shop">{ru ? "В магазин" : "Back to shop"}</Link></Button></div>
       </div>
     </AppLayout>
   );

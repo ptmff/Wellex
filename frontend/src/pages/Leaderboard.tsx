@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useAuth } from "@/auth/AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "@/auth/useAuth";
+import { useI18n } from "@/i18n/useI18n";
 import { formatWx } from "@/lib/money";
 
 type LeaderRow = {

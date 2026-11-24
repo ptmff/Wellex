@@ -76,7 +76,7 @@ export async function purchasePackage(request: AuthRequest, packageSlug: string)
 }
 
 export async function getPurchase(request: AuthRequest, purchaseId: string) {
-  return request<PurchaseResult>(`/economy/purchases/${purchaseId}`, {
+  return request<PurchaseResult>(`/economy/purchases/${encodeURIComponent(purchaseId)}`, {
     method: "GET",
     authRequired: true,
   });
@@ -99,4 +99,13 @@ export async function claimDailyBonus(request: AuthRequest) {
     "/economy/daily-bonus",
     { method: "POST", authRequired: true },
   );
+}
+
+export function purchasePollInterval(state: {
+  data?: PurchaseResult;
+  status: "pending" | "error" | "success";
+  dataUpdateCount: number;
+}) {
+  if (state.status === "error" || state.dataUpdateCount >= 20 || state.data?.status !== "pending") return false;
+  return 3000;
 }

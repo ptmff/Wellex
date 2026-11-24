@@ -1,13 +1,13 @@
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { motion } from "framer-motion";
 import { Eye, Calendar, Tag, HelpCircle } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useAuth } from "@/auth/AuthContext";
+import { useAuth } from "@/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { listMarketCategories, type CreateMarketInput, createMarket } from "@/api/markets";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 
 export default function CreateMarket() {
   const [title, setTitle] = useState("");
@@ -31,7 +31,7 @@ export default function CreateMarket() {
 
   const categories = categoriesQuery.data ?? [];
 
-  const selectedCategoryName = useMemo(() => categories.find((c) => c.id === categoryId)?.name ?? "", [categories, categoryId]);
+  const selectedCategoryName = categories.find((c) => c.id === categoryId)?.name ?? "";
 
   const submit = async () => {
     const t = title.trim();
@@ -90,7 +90,9 @@ export default function CreateMarket() {
       const created = await createMarket(request, payload);
       navigate(`/market/${created.id}`);
     } catch (err) {
-      const message = typeof (err as any)?.message === "string" ? (err as any).message : language === "ru" ? "Не удалось создать рынок" : "Failed to create market";
+      const error = err as { message?: unknown; name?: string };
+      if (error?.name === "AbortError") return;
+      const message = typeof error?.message === "string" ? error.message : language === "ru" ? "Не удалось создать рынок" : "Failed to create market";
       toast.error(message);
     } finally {
       setSubmitting(false);

@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useLocation } from "react-router-dom";
 import type { ConsentState } from "@/hooks/useCookieConsent";
-import { hitYandexMetrika, initYandexMetrika } from "./yandexMetrika";
+import { hitYandexMetrika, initYandexMetrika, stopYandexMetrika } from "./yandexMetrika";
 
 function analyticsAllowed(consentState: ConsentState): boolean {
   return consentState.status === "accepted" && consentState.consent.analytics;
@@ -19,13 +19,13 @@ export function YandexMetrikaTracker({ consentState }: Props) {
   useEffect(() => {
     if (!allowed) return;
     initYandexMetrika();
+    return stopYandexMetrika;
   }, [allowed]);
 
   useEffect(() => {
     if (!allowed) return;
-    const url = `${location.pathname}${location.search}${location.hash}`;
-    hitYandexMetrika(url);
-  }, [allowed, location.pathname, location.search, location.hash]);
+    hitYandexMetrika(location.pathname);
+  }, [allowed, location.pathname]);
 
   return null;
 }

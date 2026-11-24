@@ -7,8 +7,8 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/auth/AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "@/auth/useAuth";
+import { useI18n } from "@/i18n/useI18n";
 
 const LoginSchema = z.object({
   email: z.string().email(),
@@ -33,7 +33,7 @@ export default function Login() {
     const parsed = LoginSchema.safeParse({ email, password });
     if (parsed.success) return null;
     return parsed.error.issues[0]?.message ?? (language === "ru" ? "Некорректные данные" : "Invalid input");
-  }, [email, password]);
+  }, [email, password, language]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,7 +47,7 @@ export default function Login() {
 
     try {
       setSubmitting(true);
-      await login(parsed.data);
+      await login({ email: parsed.data.email, password: parsed.data.password });
       navigate(returnTo, { replace: true });
     } catch (err) {
       const maybe = err as { message?: unknown };

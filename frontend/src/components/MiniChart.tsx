@@ -1,32 +1,27 @@
-import { ResponsiveContainer, AreaChart, Area } from "recharts";
+import { useId } from "react";
 
-interface MiniChartProps {
-  data: { time: string; yes: number }[];
-  up: boolean;
-}
+export function MiniChart({ prices, up }: { prices: number[]; up: boolean }) {
+  const id = useId();
+  const points = prices.filter(Number.isFinite).map((price) => Math.max(0, Math.min(1, price)));
+  if (points.length < 2) return null;
 
-export function MiniChart({ data, up }: MiniChartProps) {
-  const color = up ? "hsl(160, 84%, 44%)" : "hsl(0, 72%, 55%)";
+  const line = points.map((price, i) => `${i * 100 / (points.length - 1)},${38 - price * 36}`).join(" ");
 
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data}>
-        <defs>
-          <linearGradient id={`gradient-${up ? "up" : "down"}`} x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor={color} stopOpacity={0.2} />
-            <stop offset="100%" stopColor={color} stopOpacity={0} />
-          </linearGradient>
-        </defs>
-        <Area
-          type="monotone"
-          dataKey="yes"
-          stroke={color}
-          strokeWidth={1.5}
-          fill={`url(#gradient-${up ? "up" : "down"})`}
-          dot={false}
-          isAnimationActive={false}
-        />
-      </AreaChart>
-    </ResponsiveContainer>
+    <svg
+      aria-hidden="true"
+      className={`h-full w-full ${up ? "text-success" : "text-danger"}`}
+      viewBox="0 0 100 40"
+      preserveAspectRatio="none"
+    >
+      <defs>
+        <linearGradient id={id} x2="0" y2="1">
+          <stop stopColor="currentColor" stopOpacity=".2" />
+          <stop offset="100%" stopColor="currentColor" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <polygon points={`0,40 ${line} 100,40`} fill={`url(#${id})`} />
+      <polyline points={line} fill="none" stroke="currentColor" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
+    </svg>
   );
 }

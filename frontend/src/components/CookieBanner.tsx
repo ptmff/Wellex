@@ -1,9 +1,9 @@
-import { createContext, useCallback, useContext, useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import { Cookie } from "lucide-react";
+import { CookieConsentContext } from "@/hooks/useCookieConsentActions";
 import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 import { legalRoutes } from "@/legal/config";
 import { CookieSettingsDialog } from "./CookieSettingsDialog";
 import { YandexMetrikaTracker } from "@/analytics/YandexMetrikaTracker";
@@ -15,24 +15,6 @@ import {
   type CookieConsent,
   type ConsentState,
 } from "@/hooks/useCookieConsent";
-
-type CookieConsentContextValue = {
-  openCookieSettings: () => void;
-  consentState: ConsentState;
-};
-
-const CookieConsentContext = createContext<CookieConsentContextValue | null>(null);
-
-export function useCookieConsentActions(): CookieConsentContextValue {
-  const ctx = useContext(CookieConsentContext);
-  if (!ctx) {
-    return {
-      openCookieSettings: () => {},
-      consentState: loadConsentState(),
-    };
-  }
-  return ctx;
-}
 
 type BannerProps = {
   onConsent: (state: ConsentState) => void;
@@ -56,17 +38,13 @@ function CookieBanner({ onConsent, onOpenSettings }: BannerProps) {
     language === "ru" ? legalRoutes.cookies.titleRu : legalRoutes.cookies.titleEn;
 
   return (
-    <motion.div
-      initial={{ y: "100%", opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      exit={{ y: "100%", opacity: 0 }}
-      transition={{ type: "spring", damping: 30, stiffness: 300 }}
-      className="fixed bottom-0 left-0 right-0 z-50 border-t border-border bg-background/95 backdrop-blur-sm shadow-lg"
+    <div
+      className="border-b border-border bg-card pt-[env(safe-area-inset-top)]"
       role="region"
       aria-label={t("cookie.banner.ariaLabel")}
     >
-      <div className="mx-auto max-w-5xl px-4 py-4 sm:px-6">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="container py-3">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
           <div className="flex items-start gap-3">
             <Cookie className="mt-0.5 h-5 w-5 shrink-0 text-muted-foreground" aria-hidden />
             <div className="space-y-1">
@@ -84,30 +62,32 @@ function CookieBanner({ onConsent, onOpenSettings }: BannerProps) {
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2 shrink-0">
-            <Button variant="ghost" size="sm" onClick={onOpenSettings}>
+          <div className="flex flex-wrap items-center gap-1 sm:gap-2 lg:shrink-0">
+            <Button variant="ghost" size="sm" className="min-h-10" onClick={onOpenSettings}>
               {t("cookie.banner.customize")}
             </Button>
-            <Button variant="outline" size="sm" onClick={handleRejectAll}>
+            <Button variant="outline" size="sm" className="min-h-10" onClick={handleRejectAll}>
               {t("cookie.banner.rejectAll")}
             </Button>
-            <Button size="sm" onClick={handleAcceptAll}>
+            <Button size="sm" className="min-h-10" onClick={handleAcceptAll}>
               {t("cookie.banner.acceptAll")}
             </Button>
           </div>
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
 
 export function CookieConsentProvider({ children }: { children: ReactNode }) {
   const [consentState, setConsentState] = useState<ConsentState>(() => loadConsentState());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsTrigger = useRef<HTMLElement | null>(null);
 
   const showBanner = consentState.status === "pending";
 
   const openCookieSettings = useCallback(() => {
+    settingsTrigger.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     setSettingsOpen(true);
   }, []);
 
@@ -121,7 +101,7 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
     setConsentState(acceptCustom(consent));
   }
 
-  const contextValue: CookieConsentContextValue = {
+  const contextValue = {
     openCookieSettings,
     consentState,
   };
@@ -129,22 +109,21 @@ export function CookieConsentProvider({ children }: { children: ReactNode }) {
   return (
     <CookieConsentContext.Provider value={contextValue}>
       <YandexMetrikaTracker consentState={consentState} />
+      {showBanner && <CookieBanner onConsent={setConsentState} onOpenSettings={openCookieSettings} />}
       {children}
-      <AnimatePresence>
-        {showBanner ? (
-          <CookieBanner
-            key="cookie-banner"
-            onConsent={setConsentState}
-            onOpenSettings={() => setSettingsOpen(true)}
-          />
-        ) : null}
-      </AnimatePresence>
-      <CookieSettingsDialog
-        open={settingsOpen}
-        onClose={() => setSettingsOpen(false)}
-        onSave={handleSaveCustom}
-        initialConsent={initialConsent}
-      />
+      {settingsOpen && (
+        <CookieSettingsDialog
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          onSave={handleSaveCustom}
+          initialConsent={initialConsent}
+          restoreFocus={() => {
+            const trigger = settingsTrigger.current;
+            if (trigger?.isConnected) trigger.focus();
+            else document.getElementById("main-content")?.focus();
+          }}
+        />
+      )}
     </CookieConsentContext.Provider>
   );
 }

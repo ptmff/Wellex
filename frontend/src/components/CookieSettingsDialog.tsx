@@ -11,7 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 import type { CookieConsent } from "@/hooks/useCookieConsent";
 
 type Props = {
@@ -19,9 +19,10 @@ type Props = {
   onClose: () => void;
   onSave: (consent: CookieConsent) => void;
   initialConsent: CookieConsent;
+  restoreFocus: () => void;
 };
 
-export function CookieSettingsDialog({ open, onClose, onSave, initialConsent }: Props) {
+export function CookieSettingsDialog({ open, onClose, onSave, initialConsent, restoreFocus }: Props) {
   const { t } = useI18n();
   const [analytics, setAnalytics] = useState(initialConsent.analytics);
   const [functional, setFunctional] = useState(initialConsent.functional);
@@ -32,8 +33,11 @@ export function CookieSettingsDialog({ open, onClose, onSave, initialConsent }: 
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-lg">
-        <DialogHeader>
+      <DialogContent className="max-w-lg" onCloseAutoFocus={(event) => {
+        event.preventDefault();
+        restoreFocus();
+      }}>
+        <DialogHeader className="pr-6">
           <DialogTitle>{t("cookie.settings.title")}</DialogTitle>
           <DialogDescription>{t("cookie.settings.description")}</DialogDescription>
         </DialogHeader>
@@ -86,10 +90,10 @@ export function CookieSettingsDialog({ open, onClose, onSave, initialConsent }: 
         </div>
 
         <DialogFooter className="flex-col-reverse sm:flex-row gap-2">
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" className="min-h-11" onClick={onClose}>
             {t("cookie.settings.cancel")}
           </Button>
-          <Button onClick={handleSave}>{t("cookie.settings.save")}</Button>
+          <Button className="min-h-11" onClick={handleSave}>{t("cookie.settings.save")}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -1,3 +1,6 @@
+import type { AuthRequest } from "@/auth/useAuth";
+export type { AuthRequest } from "@/auth/useAuth";
+
 export type BackendMarketCategory = {
   // В текущей реализации бекенда в ответе может не быть `id` (не выбирают c.id в SELECT).
   // Поэтому делаем опциональным и для фильтрации/ключей используем `slug`.
@@ -35,14 +38,14 @@ export type BackendMarket = {
   creator: BackendMarketCreator | null;
   prices: BackendMarketPrices;
   stats: BackendMarketStats;
-  closesAt: any; // ISO (по факту может приходить нестрокой из-за сериализации)
-  resolvedAt: any; // ISO
-  resolutionNote: any;
+  closesAt: unknown; // ISO (по факту может приходить нестрокой из-за сериализации)
+  resolvedAt: unknown; // ISO
+  resolutionNote: string | null;
   isFeatured: boolean;
   tags: string[];
   source?: string | null;
-  createdAt: any; // ISO
-  updatedAt: any; // ISO
+  createdAt: unknown; // ISO
+  updatedAt: unknown; // ISO
 };
 
 export type PaginatedResult<T> = {
@@ -113,16 +116,6 @@ export type MarketStats = {
 
 export type PriceLinePoint = { time: number; yesPrice: number; noPrice: number }; // unix seconds, yes/no 0..1
 
-export type AuthRequest = <T>(
-  path: string,
-  options?: {
-    method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-    body?: unknown;
-    authRequired?: boolean;
-    skipRefresh?: boolean;
-  },
-) => Promise<T>;
-
 function buildQuery(params: Record<string, string | number | boolean | undefined | null>) {
   const usp = new URLSearchParams();
   for (const [key, value] of Object.entries(params)) {
@@ -133,7 +126,7 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
   return qs ? `?${qs}` : "";
 }
 
-export async function listMarkets(request: AuthRequest, input: ListMarketsInput = {}) {
+export async function listMarkets(request: AuthRequest, input: ListMarketsInput = {}, signal?: AbortSignal) {
   const qs = buildQuery({
     page: input.page,
     limit: input.limit,
@@ -146,17 +139,18 @@ export async function listMarkets(request: AuthRequest, input: ListMarketsInput 
     tag: input.tag,
   });
 
-  return request<MarketListResponse>(`/markets${qs}`, { method: "GET" });
+  return request<MarketListResponse>(`/markets${qs}`, { method: "GET", authRequired: false, signal });
 }
 
 export async function listMarketCategories(request: AuthRequest) {
   return request<Array<{ id: string; name: string; slug: string; icon: string | null }>>("/markets/categories", {
     method: "GET",
+    authRequired: false,
   });
 }
 
 export async function getMarket(request: AuthRequest, marketId: string) {
-  return request<BackendMarket>(`/markets/${marketId}`, { method: "GET" });
+  return request<BackendMarket>(`/markets/${marketId}`, { method: "GET", authRequired: false });
 }
 
 export async function createMarket(request: AuthRequest, input: CreateMarketInput) {
@@ -172,20 +166,20 @@ export async function updateMarketStatus(request: AuthRequest, marketId: string,
 }
 
 export async function getMarketStats(request: AuthRequest, marketId: string) {
-  return request<MarketStats>(`/markets/${marketId}/stats`, { method: "GET" });
+  return request<MarketStats>(`/markets/${marketId}/stats`, { method: "GET", authRequired: false });
 }
 
 export async function getMarketPriceLine(
   request: AuthRequest,
   marketId: string,
-  opts: { from?: number; to?: number; points?: number } = {},
+  opts: { from?: number; to?: number; points?: number; signal?: AbortSignal } = {},
 ) {
   const qs = buildQuery({
     from: opts.from,
     to: opts.to,
     points: opts.points,
   });
-  return request<PriceLinePoint[]>(`/analytics/markets/${marketId}/price-line${qs}`, { method: "GET", authRequired: false });
+  return request<PriceLinePoint[]>(`/analytics/markets/${marketId}/price-line${qs}`, { method: "GET", authRequired: false, signal: opts.signal });
 }
 
 export type MarketComment = {

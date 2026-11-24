@@ -1,6 +1,6 @@
 import { Link, Navigate, useParams } from "react-router-dom";
 import { AppLayout } from "@/components/layout/AppLayout";
-import { useI18n } from "@/i18n/I18nContext";
+import { useI18n } from "@/i18n/useI18n";
 import { legalRoutes, type LegalSlug } from "@/legal/config";
 import { getLegalDocument, legalSlugs } from "@/legal/documents";
 

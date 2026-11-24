@@ -1,14 +1,14 @@
-import React from "react";
+import { Fragment, type ReactNode } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "./AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "./useAuth";
+import { useI18n } from "@/i18n/useI18n";
 import { isStaffRole } from "@/lib/money";
 
 export function ProtectedRoute({
   children,
   staffOnly = false,
 }: {
-  children: React.ReactNode;
+  children: ReactNode;
   staffOnly?: boolean;
 }) {
   const { user, isLoading } = useAuth();
@@ -16,16 +16,16 @@ export function ProtectedRoute({
   const location = useLocation();
 
   if (isLoading) {
-    return <div className="text-center py-20 text-muted-foreground">{language === "ru" ? "Загрузка..." : "Loading..."}</div>;
+    return <div role="status" className="text-center py-20 text-muted-foreground">{language === "ru" ? "Загрузка..." : "Loading..."}</div>;
   }
 
   if (!user) {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+    return <Navigate to="/login" replace state={{ from: location.pathname + location.search + location.hash }} />;
   }
 
   if (staffOnly && !isStaffRole(user.role)) {
     return <Navigate to="/markets" replace />;
   }
 
-  return <>{children}</>;
+  return <Fragment key={user.id}>{children}</Fragment>;
 }

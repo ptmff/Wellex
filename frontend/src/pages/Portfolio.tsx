@@ -1,8 +1,10 @@
+import { accountKey, invalidatePortfolio } from "@/auth/accountQueries";
 import { useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { ArrowUpRight, ArrowDownRight } from "lucide-react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { QueryError } from "@/components/QueryError";
 import { AppLayout } from "@/components/layout/AppLayout";
 import {
   ResponsiveContainer,
@@ -13,7 +15,7 @@ import {
   Tooltip,
   CartesianGrid,
 } from "recharts";
-import { useAuth } from "@/auth/AuthContext";
+import { useAuth } from "@/auth/useAuth";
 import {
   Table,
   TableBody,
@@ -41,8 +43,8 @@ import type {
   PortfolioTrade,
 } from "@/lib/portfolio";
 import { formatDateToLocaleDateString, formatDateToLocaleString, parseDate } from "@/lib/date";
-import { executeMarketTrade, getTradeQuote } from "@/api/trading";
-import { useI18n } from "@/i18n/I18nContext";
+import { executeMarketTrade, getTradeQuote, type MarketTradeInput } from "@/api/trading";
+import { useI18n } from "@/i18n/useI18n";
 import { formatWx } from "@/lib/money";
 import { Link } from "react-router-dom";
 
@@ -70,8 +72,9 @@ export default function Portfolio() {
     isError: isPortfolioError,
     error: portfolioError,
   } = useQuery({
-    queryKey: ["portfolio"],
+    queryKey: accountKey(user?.id, "portfolio"),
     queryFn: () => request<PortfolioSummaryResponse>("/portfolio", { method: "GET" }),
+    refetchInterval: 30_000,
   });
 
   const {
@@ -80,12 +83,13 @@ export default function Portfolio() {
     isError: isPositionsError,
     error: positionsError,
   } = useQuery({
-    queryKey: ["portfolio-positions"],
+    queryKey: accountKey(user?.id, "portfolio-positions"),
     queryFn: () => request<PortfolioPosition[]>("/portfolio/positions", { method: "GET" }),
+    refetchInterval: 30_000,
   });
 
   const marketIds = useMemo(() => (apiPositions ?? []).map((p) => p.marketId), [apiPositions]);
-  usePortfolioWebSocket({ enabled: !!user, marketIds });
+  const live = usePortfolioWebSocket({ enabled: !!user, marketIds });
 
   const {
     data: pnlSummary,
@@ -93,8 +97,9 @@ export default function Portfolio() {
     isError: isPnlError,
     error: pnlError,
   } = useQuery({
-    queryKey: ["portfolio-pnl"],
+    queryKey: accountKey(user?.id, "portfolio-pnl"),
     queryFn: () => request<PortfolioPnlEndpointResponse>("/portfolio/pnl", { method: "GET" }),
+    refetchInterval: live ? 60_000 : 20_000,
   });
 
   const {
@@ -103,7 +108,7 @@ export default function Portfolio() {
     isError: isBalanceError,
     error: balanceError,
   } = useQuery({
-    queryKey: ["portfolio-balance-history", balanceHistoryPage, balanceHistoryLimit],
+    queryKey: accountKey(user?.id, "portfolio-balance-history", balanceHistoryPage, balanceHistoryLimit),
     queryFn: () =>
       request<PaginatedResult<PortfolioBalanceTx>>(
         `/portfolio/balance-history?page=${balanceHistoryPage}&limit=${balanceHistoryLimit}`,
@@ -117,49 +122,49 @@ export default function Portfolio() {
     isError: isTradesError,
     error: tradesError,
   } = useQuery({
-    queryKey: ["portfolio-trades", tradesPage, tradesLimit],
+    queryKey: accountKey(user?.id, "portfolio-trades", tradesPage, tradesLimit),
     queryFn: () =>
       request<PaginatedResult<PortfolioTrade>>(`/portfolio/trades?page=${tradesPage}&limit=${tradesLimit}`, {
         method: "GET",
       }),
-    keepPreviousData: true,
+    placeholderData: keepPreviousData,
   });
 
   const portfolioErrorMessage = isPortfolioError
-    ? typeof (portfolioError as { message?: unknown }).message === "string"
-      ? (portfolioError as { message?: unknown }).message
+    ? typeof portfolioError?.message === "string"
+      ? portfolioError?.message
       : language === "ru"
         ? "Не удалось загрузить портфель"
         : "Failed to load portfolio"
     : null;
 
   const positionsErrorMessage = isPositionsError
-    ? typeof (positionsError as { message?: unknown }).message === "string"
-      ? (positionsError as { message?: unknown }).message
+    ? typeof positionsError?.message === "string"
+      ? positionsError?.message
       : language === "ru"
         ? "Не удалось загрузить позиции"
         : "Failed to load positions"
     : null;
 
   const pnlErrorMessage = isPnlError
-    ? typeof (pnlError as { message?: unknown }).message === "string"
-      ? (pnlError as { message?: unknown }).message
+    ? typeof pnlError?.message === "string"
+      ? pnlError?.message
       : language === "ru"
         ? "Не удалось загрузить PnL"
         : "Failed to load PnL"
     : null;
 
   const balanceErrorMessage = isBalanceError
-    ? typeof (balanceError as { message?: unknown }).message === "string"
-      ? (balanceError as { message?: unknown }).message
+    ? typeof balanceError?.message === "string"
+      ? balanceError?.message
       : language === "ru"
         ? "Не удалось загрузить историю баланса"
         : "Failed to load balance history"
     : null;
 
   const tradesErrorMessage = isTradesError
-    ? typeof (tradesError as { message?: unknown }).message === "string"
-      ? (tradesError as { message?: unknown }).message
+    ? typeof tradesError?.message === "string"
+      ? tradesError?.message
       : language === "ru"
         ? "Не удалось загрузить сделки"
         : "Failed to load trades"
@@ -189,13 +194,11 @@ export default function Portfolio() {
   const closingPosition = (apiPositions ?? []).find((p) => p.id === closingPositionId) ?? null;
 
   const marketCloseQuoteQuery = useQuery({
-    queryKey: [
-      "market-close-quote",
+    queryKey: accountKey(user?.id, "market-close-quote",
       closingPosition?.marketId,
       closingPosition?.side,
       closingPosition?.quantity,
-      maxSlippage,
-    ],
+    ),
     queryFn: () =>
       getTradeQuote(request, closingPosition!.marketId, {
         side: closingPosition!.side,
@@ -203,40 +206,29 @@ export default function Portfolio() {
         amount: closingPosition!.quantity,
       }),
     enabled: !!closingPosition && !!request && !!user,
-    refetchInterval: closingPosition ? 3000 : false,
+    refetchInterval: closingPosition ? 5000 : false,
   });
 
   const marketCloseMutation = useMutation({
-    mutationFn: async () => {
-      if (!closingPosition) return null;
-      const quote = marketCloseQuoteQuery.data;
-      return executeMarketTrade(request, closingPosition.marketId, {
-        side: closingPosition.side,
-        action: "sell",
-        amount: closingPosition.quantity,
-        maxSlippage,
-        expectedPrice: quote?.averagePrice,
-      });
-    },
-    onSuccess: async (result) => {
-      if (!result) return;
-      toast.success(
-        `${language === "ru" ? "Позиция закрыта:" : "Position closed:"} ${result.sharesTransacted.toFixed(4)} ${language === "ru" ? "акций" : "shares"} ${language === "ru" ? "по" : "at"} ${Math.round(
-          result.averagePrice * 100,
-        )}c`,
-      );
+    mutationFn: ({ marketId, ...input }: MarketTradeInput & { marketId: string }) =>
+      executeMarketTrade(request, marketId, input),
+    onSuccess: async (result, input) => {
+      const remaining = Math.max(0, input.amount - result.sharesTransacted);
+      const filled = result.sharesTransacted.toLocaleString(locale, { maximumFractionDigits: 8 });
+      const leftover = remaining.toLocaleString(locale, { maximumFractionDigits: 8 });
+      toast.success(remaining > 0.0000001
+        ? language === "ru" ? `Частичное исполнение: продано ${filled}, осталось ${leftover} акций.`
+          : `Partial fill: sold ${filled} shares, ${leftover} remain.`
+        : language === "ru" ? `Позиция закрыта. Продано ${filled} акций.` : `Position closed. Sold ${filled} shares.`);
       setClosingPositionId(null);
-      await queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
-      await queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
+      await invalidatePortfolio(queryClient, user?.id);
     },
-    onError: (err) => {
-      const maybeMessage = (err as { message?: unknown } | undefined)?.message;
-      toast.error(typeof maybeMessage === "string" ? maybeMessage : language === "ru" ? "Не удалось закрыть позицию" : "Failed to close position");
+    onError: (error) => {
+      if (error?.name !== "AbortError") toast.error(error?.message || (language === "ru" ? "Не удалось закрыть позицию" : "Failed to close position"));
     },
   });
+  const quote = marketCloseQuoteQuery.data;
+  const partialQuote = !!(quote && closingPosition && closingPosition.quantity - quote.shares > 0.0000001);
 
   const chartData: ChartPoint[] = useMemo(() => {
     const txs = balanceHistory?.data ?? [];
@@ -252,15 +244,15 @@ export default function Portfolio() {
       })
       .sort((a, b) => a.ts - b.ts)
       .map(({ time, value }) => ({ time, value }));
-  }, [balanceHistory]);
+  }, [balanceHistory, language, locale]);
 
   const recentBalances = useMemo(() => (balanceHistory?.data ?? []).slice(0, 10), [balanceHistory]);
 
   return (
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-        <h1 className="text-2xl font-bold mb-6">{language === "ru" ? "Портфель" : "Portfolio"}</h1>
-        {user && !isPortfolioLoading && availableBalance <= 0 ? (
+        <h1 className="text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl mb-6">{language === "ru" ? "Портфель" : "Portfolio"}</h1>
+        {user && portfolio && availableBalance <= 0 ? (
           <div className="rounded-xl border border-border/50 bg-card p-4 mb-4 text-sm">
             {language === "ru" ? "Баланс пуст. " : "Balance is empty. "}
             <Link to="/shop" className="text-primary hover:underline">
@@ -270,24 +262,24 @@ export default function Portfolio() {
         ) : null}
 
         {/* Balance cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 mb-6">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Доступный баланс" : "Available Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(availableBalance)}</div>
+            <div className="text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl">{isPortfolioLoading ? "…" : !portfolio ? "—" : formatWx(availableBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Зарезервированный баланс" : "Reserved Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(reservedBalance)}</div>
+            <div className="text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl">{isPortfolioLoading ? "…" : !portfolio ? "—" : formatWx(reservedBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий баланс" : "Total Balance"}</div>
-            <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : formatWx(totalBalance)}</div>
+            <div className="text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl">{isPortfolioLoading ? "…" : !portfolio ? "—" : formatWx(totalBalance)}</div>
           </div>
           <div className="rounded-xl bg-card border border-border/50 p-4">
             <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Общий P&L" : "Total P&L"}</div>
-            <div className="flex items-center gap-1.5">
-              <span className={`text-2xl font-bold ${isPnlPositive ? "text-success" : "text-danger"}`}>
-                {isPortfolioLoading ? "…" : formatWx(totalPnl, { signed: true })}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className={`text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl ${isPnlPositive ? "text-success" : "text-danger"}`}>
+                {isPortfolioLoading ? "…" : !portfolio ? "—" : formatWx(totalPnl, { signed: true })}
               </span>
               <span
                 className={`flex items-center text-xs ${
@@ -299,7 +291,7 @@ export default function Portfolio() {
                 ) : (
                   <ArrowDownRight className="h-3 w-3" />
                 )}
-                {isPortfolioLoading ? "—" : `${pnlPercent.toFixed(2)}%`}
+                {isPortfolioLoading || !portfolio ? "—" : `${pnlPercent.toFixed(2)}%`}
               </span>
             </div>
           </div>
@@ -308,7 +300,7 @@ export default function Portfolio() {
         {/* Open positions */}
         <div className="rounded-xl bg-card border border-border/50 p-4 mb-6">
           <div className="text-xs text-muted-foreground mb-1">{language === "ru" ? "Открытые позиции" : "Open Positions"}</div>
-          <div className="text-2xl font-bold">{isPortfolioLoading ? "…" : portfolio?.positions.open ?? 0}</div>
+          <div className="text-lg font-bold [overflow-wrap:anywhere] sm:text-2xl">{isPortfolioLoading ? "…" : portfolio?.positions.open ?? "—"}</div>
         </div>
 
         {/* Performance chart */}
@@ -463,7 +455,7 @@ export default function Portfolio() {
                   <div className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{language === "ru" ? "Реализовано со сделок" : "Realized from trades"}</span>
                     <span
-                      className={`font-medium ${pnlSummary?.pnl.realizedFromTrades >= 0 ? "text-success" : "text-danger"}`}
+                      className={`font-medium ${(pnlSummary?.pnl.realizedFromTrades ?? 0) >= 0 ? "text-success" : "text-danger"}`}
                     >
                       {formatWx(pnlSummary?.pnl.realizedFromTrades ?? 0, { signed: true })}
                     </span>
@@ -477,7 +469,7 @@ export default function Portfolio() {
                   <div className="flex justify-between gap-3 pt-1 border-t border-border/30">
                     <span className="text-muted-foreground">{language === "ru" ? "Итого реализовано" : "Total realized"}</span>
                     <span
-                      className={`font-medium ${pnlSummary?.pnl.totalRealized >= 0 ? "text-success" : "text-danger"}`}
+                      className={`font-medium ${(pnlSummary?.pnl.totalRealized ?? 0) >= 0 ? "text-success" : "text-danger"}`}
                     >
                       {formatWx(pnlSummary?.pnl.totalRealized ?? 0, { signed: true })}
                     </span>
@@ -607,24 +599,26 @@ export default function Portfolio() {
             <DialogTitle>{language === "ru" ? "Закрыть позицию по рынку" : "Close Position at Market"}</DialogTitle>
             <DialogDescription>
               {language === "ru"
-                ? `Продайте всю позицию ${closingPosition?.side.toUpperCase()} сразу по доступным заявкам.`
-                : `Sell your full ${closingPosition?.side.toUpperCase()} position immediately into available bids.`}
+                ? `Продайте акции ${closingPosition?.side.toUpperCase()} по доступным заявкам. При недостатке ликвидности часть позиции останется открытой.`
+                : `Sell ${closingPosition?.side.toUpperCase()} shares into available bids. Some shares may remain open if liquidity is limited.`}
             </DialogDescription>
           </DialogHeader>
 
           {!closingPosition ? null : (
             <div className="space-y-3 text-sm">
               <div className="rounded-md border border-border/60 bg-secondary/30 p-3">
-                <div className="font-medium">{closingPosition.marketTitle}</div>
+                <div className="font-medium [overflow-wrap:anywhere]">{closingPosition.marketTitle}</div>
                 <div className="text-xs text-muted-foreground mt-1">
                   {closingPosition.side.toUpperCase()} | {closingPosition.quantity.toFixed(4)} {language === "ru" ? "акций" : "shares"}
                 </div>
               </div>
 
               <div>
-                <label className="text-xs text-muted-foreground mb-1 block">{language === "ru" ? "Макс. проскальзывание (%)" : "Max slippage (%)"}</label>
+                <label htmlFor="close-position-slippage" className="text-xs text-muted-foreground mb-1 block">{language === "ru" ? "Макс. проскальзывание (%)" : "Max slippage (%)"}</label>
                 <input
+                  id="close-position-slippage"
                   type="number"
+                  inputMode="decimal"
                   min={0}
                   max={50}
                   step={0.1}
@@ -666,13 +660,20 @@ export default function Portfolio() {
                 {marketCloseQuoteQuery.isLoading ? (
                   <div className="text-muted-foreground pt-1">{language === "ru" ? "Получаем актуальную котировку..." : "Fetching live quote..."}</div>
                 ) : null}
-                {marketCloseQuoteQuery.isError ? (
-                  <div className="text-destructive pt-1">
+                {marketCloseQuoteQuery.isError && (
+                  <QueryError
+                    message={language === "ru" ? "Котировка недоступна. Проверьте ликвидность и попробуйте снова." : "Quote unavailable. Check liquidity and try again."}
+                    retry={() => void marketCloseQuoteQuery.refetch()}
+                    busy={marketCloseQuoteQuery.isFetching}
+                  />
+                )}
+                {partialQuote && !marketCloseQuoteQuery.isError && (
+                  <p role="status" className="pt-1 text-warning">
                     {language === "ru"
-                      ? "Не удалось получить котировку. Для закрытия может не хватать мгновенной ликвидности."
-                      : "Failed to get quote. There may be no immediate liquidity for this close."}
-                  </div>
-                ) : null}
+                      ? `По текущей котировке можно продать ${quote.shares.toLocaleString(locale)} из ${closingPosition.quantity.toLocaleString(locale)} акций.`
+                      : `The current quote can sell ${quote.shares.toLocaleString(locale)} of ${closingPosition.quantity.toLocaleString(locale)} shares.`}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -683,10 +684,20 @@ export default function Portfolio() {
             </Button>
             <Button
               variant="destructive"
-              disabled={marketCloseMutation.isPending || !marketCloseQuoteQuery.data || marketCloseQuoteQuery.isError}
-              onClick={() => marketCloseMutation.mutate()}
+              disabled={marketCloseMutation.isPending || !closingPosition || !quote?.shares || marketCloseQuoteQuery.isError}
+              onClick={() => {
+                if (!closingPosition || !quote || marketCloseMutation.isPending) return;
+                marketCloseMutation.mutate({
+                  marketId: closingPosition.marketId,
+                  side: closingPosition.side,
+                  action: "sell",
+                  amount: closingPosition.quantity,
+                  maxSlippage,
+                  expectedPrice: quote.averagePrice,
+                });
+              }}
             >
-              {marketCloseMutation.isPending ? (language === "ru" ? "Закрываем..." : "Closing...") : language === "ru" ? "Закрыть позицию" : "Close position now"}
+              {marketCloseMutation.isPending ? (language === "ru" ? "Закрываем..." : "Closing...") : partialQuote ? language === "ru" ? "Продать доступный объём" : "Sell available shares" : language === "ru" ? "Закрыть позицию" : "Close position now"}
             </Button>
           </DialogFooter>
         </DialogContent>

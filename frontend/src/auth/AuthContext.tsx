@@ -1,15 +1,8 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { API_BASE_URL } from "@/config";
+import { AuthContext, type AuthUser, type LoginInput, type RegisterInput, type RequestOptions } from "./useAuth";
 import { clearTokens, getAccessToken, getRefreshToken, setTokens } from "./session";
-
-type AuthUser = {
-  id: string;
-  email: string;
-  username: string;
-  role: string;
-  status?: string;
-  displayName?: string | null;
-};
 
 type TokenPair = {
   accessToken: string;
@@ -22,17 +15,6 @@ type ApiSuccess<T> = {
   data: T;
 };
 
-type ApiErrorResponse = {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-    details?: unknown;
-    timestamp: string;
-    requestId?: string;
-  };
-};
-
 type ApiError = {
   status: number;
   code?: string;
@@ -41,19 +23,9 @@ type ApiError = {
   requestId?: string;
 };
 
-export type RegisterInput = {
-  email: string;
-  username: string;
-  password: string;
-  displayName?: string;
-  legalConsent: true;
-  legalDocsVersion: string;
-};
-
-export type LoginInput = {
-  email: string;
-  password: string;
-};
+function sessionChanged() {
+  return new DOMException("Account session changed", "AbortError");
+}
 
 type AuthResult = TokenPair & {
   user: {
@@ -65,49 +37,24 @@ type AuthResult = TokenPair & {
   };
 };
 
-type AuthContextValue = {
-  user: AuthUser | null;
-  isLoading: boolean;
-  login: (input: LoginInput) => Promise<AuthUser>;
-  register: (input: RegisterInput) => Promise<AuthUser>;
-  logout: () => Promise<void>;
-  // Generic request wrapper for authenticated API calls.
-  request: <T>(
-    path: string,
-    options?: {
-      method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-      body?: unknown;
-      authRequired?: boolean;
-      skipRefresh?: boolean;
-    },
-  ) => Promise<T>;
-};
-
-const AuthContext = createContext<AuthContextValue | null>(null);
-
 function toApiError(payload: unknown, status: number): ApiError {
-  if (payload && typeof payload === "object" && "error" in payload) {
-    const err = payload as ApiErrorResponse;
-    return {
-      status,
-      code: err.error.code,
-      message: err.error.message,
-      details: err.error.details,
-      requestId: err.error.requestId,
-    };
-  }
-
+  const error = (payload as { error?: Partial<ApiError> } | null)?.error;
   return {
     status,
-    message: "Request failed",
+    message: typeof error?.message === "string" ? error.message : "Request failed",
+    code: typeof error?.code === "string" ? error.code : undefined,
+    details: error?.details,
+    requestId: typeof error?.requestId === "string" ? error.requestId : undefined,
   };
 }
 
-export function AuthProvider({ children }: { children: React.ReactNode }) {
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const refreshPromiseRef = useRef<Promise<boolean> | null>(null);
+  const sessionRevision = useRef(0);
 
   const rawRequest = useCallback(
     async <T,>(
@@ -116,6 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         method?: string;
         body?: unknown;
         authHeader?: string | null;
+        signal?: AbortSignal;
       } = {},
     ): Promise<T> => {
       const url = `${API_BASE_URL}${path}`;
@@ -131,33 +79,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await fetch(url, {
         method: options.method ?? "GET",
         headers,
+        signal: options.signal,
         body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
       });
 
-      const payload = await res
-        .json()
-        .catch(() => null as unknown as ApiErrorResponse | null);
-
-      if (!res.ok) {
-        throw toApiError(payload, res.status);
-      }
-
-      const json = payload as ApiSuccess<T>;
-      return json.data;
+      const payload: unknown = await res.json().catch((error: unknown) => {
+        if ((error as Error)?.name === "AbortError") throw error;
+        return null;
+      });
+      const json = payload as Partial<ApiSuccess<T>> | null;
+      if (!res.ok || json?.success !== true) throw toApiError(payload, res.status);
+      return (json as ApiSuccess<T>).data;
     },
     [],
   );
 
   const clearAndSetUnauthenticated = useCallback(() => {
+    sessionRevision.current += 1;
+    refreshPromiseRef.current = null;
     clearTokens();
+    void queryClient.cancelQueries({ queryKey: ["account"] });
+    queryClient.removeQueries({ queryKey: ["account"] });
+    queryClient.getMutationCache().clear();
     setUser(null);
-  }, []);
+    setIsLoading(false);
+  }, [queryClient]);
 
   const refreshAccessToken = useCallback(async (): Promise<boolean> => {
     const refreshToken = getRefreshToken();
     if (!refreshToken) return false;
 
     if (refreshPromiseRef.current) return refreshPromiseRef.current;
+    const revision = sessionRevision.current;
 
     refreshPromiseRef.current = (async () => {
       try {
@@ -166,6 +119,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           body: { refreshToken },
         });
 
+        if (revision !== sessionRevision.current) return false;
         setTokens(tokens.accessToken, tokens.refreshToken);
 
         const me = await rawRequest<AuthUser>("/auth/me", {
@@ -173,13 +127,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           authHeader: `Bearer ${tokens.accessToken}`,
         });
 
+        if (revision !== sessionRevision.current) return false;
         setUser(me);
         return true;
-      } catch {
-        clearAndSetUnauthenticated();
+      } catch (error) {
+        const status = (error as ApiError)?.status;
+        if (revision === sessionRevision.current && (status === 401 || status === 403)) {
+          clearAndSetUnauthenticated();
+        }
         return false;
       } finally {
-        refreshPromiseRef.current = null;
+        if (revision === sessionRevision.current) refreshPromiseRef.current = null;
       }
     })();
 
@@ -189,26 +147,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const request = useCallback(
     async <T,>(
       path: string,
-      options?: {
-        method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-        body?: unknown;
-        authRequired?: boolean;
-        skipRefresh?: boolean;
-      },
+      options?: RequestOptions,
     ): Promise<T> => {
       const authRequired = options?.authRequired ?? true;
       const skipRefresh = options?.skipRefresh ?? false;
 
       const accessToken = getAccessToken();
       const authHeader = authRequired ? (accessToken ? `Bearer ${accessToken}` : null) : null;
+      const revision = sessionRevision.current;
+      const ensureCurrentSession = () => {
+        if (authRequired && revision !== sessionRevision.current) throw sessionChanged();
+      };
 
       try {
-        return await rawRequest<T>(path, {
+        const data = await rawRequest<T>(path, {
           method: options?.method,
           body: options?.body,
           authHeader,
+          signal: options?.signal,
         });
+        ensureCurrentSession();
+        return data;
       } catch (err) {
+        ensureCurrentSession();
         const apiError = err as ApiError;
         const shouldRefresh =
           authRequired &&
@@ -221,17 +182,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         if (!shouldRefresh) throw err;
 
-        const refreshed = await refreshAccessToken();
-        if (!refreshed) throw err;
+        if (accessToken === getAccessToken() && !(await refreshAccessToken())) throw err;
+        ensureCurrentSession();
 
         const newAccessToken = getAccessToken();
         const retryAuthHeader = newAccessToken ? `Bearer ${newAccessToken}` : null;
 
-        return rawRequest<T>(path, {
+        const data = await rawRequest<T>(path, {
           method: options?.method,
           body: options?.body,
           authHeader: retryAuthHeader,
+          signal: options?.signal,
         });
+        ensureCurrentSession();
+        return data;
       }
     },
     [rawRequest, refreshAccessToken],
@@ -239,37 +203,44 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (input: LoginInput): Promise<AuthUser> => {
+      const revision = sessionRevision.current;
       const result = await rawRequest<AuthResult>("/auth/login", {
         method: "POST",
         body: input,
       });
 
+      if (revision !== sessionRevision.current) throw sessionChanged();
+      clearAndSetUnauthenticated();
       setTokens(result.accessToken, result.refreshToken);
       setUser(result.user);
 
       return result.user;
     },
-    [rawRequest],
+    [clearAndSetUnauthenticated, rawRequest],
   );
 
   const register = useCallback(
     async (input: RegisterInput): Promise<AuthUser> => {
+      const revision = sessionRevision.current;
       const result = await rawRequest<AuthResult>("/auth/register", {
         method: "POST",
         body: input,
       });
 
+      if (revision !== sessionRevision.current) throw sessionChanged();
+      clearAndSetUnauthenticated();
       setTokens(result.accessToken, result.refreshToken);
       setUser(result.user);
 
       return result.user;
     },
-    [rawRequest],
+    [clearAndSetUnauthenticated, rawRequest],
   );
 
   const logout = useCallback(async () => {
     const accessToken = getAccessToken();
     const refreshToken = getRefreshToken();
+    clearAndSetUnauthenticated();
 
     try {
       if (accessToken) {
@@ -281,8 +252,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {
       // Best-effort logout: regardless of server response, clear local session.
-    } finally {
-      clearAndSetUnauthenticated();
     }
   }, [clearAndSetUnauthenticated, rawRequest]);
 
@@ -297,9 +266,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           return;
         }
 
-        const ok = await refreshAccessToken();
-        if (cancelled) return;
-        if (!ok) clearAndSetUnauthenticated();
+        await refreshAccessToken();
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -308,9 +275,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [clearAndSetUnauthenticated, refreshAccessToken]);
+  }, [refreshAccessToken]);
 
-  const value = useMemo<AuthContextValue>(
+  const value = useMemo(
     () => ({
       user,
       isLoading,
@@ -324,10 +291,3 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
-
-export function useAuth() {
-  const ctx = useContext(AuthContext);
-  if (!ctx) throw new Error("useAuth must be used within AuthProvider");
-  return ctx;
-}
-

@@ -1,15 +1,11 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { WS_BASE_URL } from "@/config";
+import { useAuth } from "@/auth/useAuth";
+import { accountKey } from "@/auth/accountQueries";
 import { getAccessToken } from "@/auth/session";
+import { WS_BASE_URL } from "@/config";
 
-type WsInboundMessage = {
-  type: string;
-  payload: unknown;
-  timestamp: string;
-};
-
-function isObject(value: unknown): value is Record<string, unknown> {
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
@@ -21,213 +17,141 @@ export function usePortfolioWebSocket({
   marketIds: string[];
 }) {
   const queryClient = useQueryClient();
-
-  const marketIdSetRef = useRef<Set<string>>(new Set());
-  const subscribedMarketIdsRef = useRef<Set<string>>(new Set());
-
-  const wsRef = useRef<WebSocket | null>(null);
-  const authedRef = useRef(false);
-  const syncSubscriptionsRef = useRef<(() => void) | null>(null);
-
-  const lastInvalidateAtRef = useRef(0);
-  const scheduledInvalidateRef = useRef<number | null>(null);
-
-  const marketIdKey = useMemo(() => marketIds.slice().sort().join(","), [marketIds]);
-
-  // Keep "marketIds" fresh without recreating the WS connection,
-  // and subscribe to any newly added markets on the live socket.
-  useEffect(() => {
-    marketIdSetRef.current = new Set(marketIds);
-    syncSubscriptionsRef.current?.();
-  }, [marketIdKey, marketIds]);
+  const { user } = useAuth();
+  const [live, setLive] = useState(false);
+  const desiredMarkets = useRef(new Set<string>());
+  const syncMarkets = useRef<(() => void) | null>(null);
 
   useEffect(() => {
+    desiredMarkets.current = new Set(marketIds);
+    syncMarkets.current?.();
+  }, [marketIds]);
+
+  useEffect(() => {
+    setLive(false);
     if (!enabled) return;
+    const userId = user?.id;
 
-    let cancelled = false;
-    let reconnectAttempts = 0;
-    let reconnectTimer: number | null = null;
+    let socket: WebSocket | undefined;
+    let reconnectTimer: number | undefined;
+    let updateTimer: number | undefined;
+    let attempts = 0;
+    let disposed = false;
+    const activeMarkets = new Set<string>();
+    const subscribedMarkets = new Set<string>();
+    const updates = new Map<string, readonly unknown[]>();
 
-    const invalidateAll = () => {
-      const now = Date.now();
-      const throttleMs = 1500;
+    function flushUpdates() {
+      updateTimer = undefined;
+      for (const queryKey of updates.values()) {
+        void queryClient.invalidateQueries({ queryKey }, { cancelRefetch: false });
+      }
+      updates.clear();
+    }
 
-      const shouldInvalidate = now - lastInvalidateAtRef.current >= throttleMs;
-      if (!shouldInvalidate) {
-        const remaining = throttleMs - (now - lastInvalidateAtRef.current);
-        if (scheduledInvalidateRef.current) window.clearTimeout(scheduledInvalidateRef.current);
-        scheduledInvalidateRef.current = window.setTimeout(() => {
-          scheduledInvalidateRef.current = null;
-          lastInvalidateAtRef.current = Date.now();
-          queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
-        }, remaining);
+    function invalidate(queryKey: readonly unknown[]) {
+      updates.set(JSON.stringify(queryKey), queryKey);
+      updateTimer ??= window.setTimeout(flushUpdates, 1000);
+    }
+
+    function invalidatePortfolio(includeHistory: boolean) {
+      if (!userId) return;
+      const keys = ["portfolio", "portfolio-positions", "portfolio-pnl"];
+      if (includeHistory) keys.push("portfolio-trades", "portfolio-balance-history", "my-orders");
+      for (const key of keys) invalidate(accountKey(userId, key));
+    }
+
+    function updateMarketSubscriptions() {
+      if (socket?.readyState !== WebSocket.OPEN) return;
+      for (const marketId of activeMarkets) {
+        if (desiredMarkets.current.has(marketId)) continue;
+        socket.send(JSON.stringify({ type: "unsubscribe_market", marketId }));
+        activeMarkets.delete(marketId);
+        subscribedMarkets.delete(marketId);
+      }
+      for (const marketId of desiredMarkets.current) {
+        if (activeMarkets.has(marketId)) continue;
+        socket.send(JSON.stringify({ type: "subscribe_market", marketId }));
+        activeMarkets.add(marketId);
+      }
+      setLive(activeMarkets.size > 0 && activeMarkets.size === subscribedMarkets.size);
+    }
+
+    function scheduleReconnect() {
+      if (disposed) return;
+      setLive(false);
+      const delay = Math.min(30_000, 1000 * 2 ** Math.min(attempts++, 5));
+      reconnectTimer = window.setTimeout(connect, delay);
+    }
+
+    function connect() {
+      if (disposed) return;
+      try {
+        socket = new WebSocket(WS_BASE_URL);
+      } catch {
+        scheduleReconnect();
         return;
       }
-
-      lastInvalidateAtRef.current = now;
-      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-trades"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-balance-history"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
-    };
-
-    const invalidatePositionsOnly = () => {
-      const now = Date.now();
-      const throttleMs = 700;
-
-      const shouldInvalidate = now - lastInvalidateAtRef.current >= throttleMs;
-      if (!shouldInvalidate) {
-        const remaining = throttleMs - (now - lastInvalidateAtRef.current);
-        if (scheduledInvalidateRef.current) window.clearTimeout(scheduledInvalidateRef.current);
-        scheduledInvalidateRef.current = window.setTimeout(() => {
-          scheduledInvalidateRef.current = null;
-          lastInvalidateAtRef.current = Date.now();
-          queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
-          queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
-        }, remaining);
-        return;
-      }
-
-      lastInvalidateAtRef.current = now;
-      queryClient.invalidateQueries({ queryKey: ["portfolio"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-positions"] });
-      queryClient.invalidateQueries({ queryKey: ["portfolio-pnl"] });
-    };
-
-    const subscribeMissingMarkets = () => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      if (!authedRef.current) {
-        // Subscribe to markets even without auth (price_update/trade are broadcast to market subscribers).
-        // Portfolio channel requires auth but positions can still update via market events.
-      }
-
-      for (const id of marketIdSetRef.current) {
-        if (subscribedMarketIdsRef.current.has(id)) continue;
-        ws.send(JSON.stringify({ type: "subscribe_market", marketId: id }));
-        subscribedMarketIdsRef.current.add(id);
-      }
-    };
-
-    const ensurePortfolioSubscriptions = () => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      // Subscribe to portfolio updates (if backend emits portfolio_update).
-      ws.send(JSON.stringify({ type: "subscribe_portfolio" }));
-      subscribeMissingMarkets();
-    };
-
-    const connect = () => {
-      if (cancelled) return;
-
-      reconnectAttempts += 1;
-      const ws = new WebSocket(WS_BASE_URL);
-      wsRef.current = ws;
-
-      subscribedMarketIdsRef.current = new Set();
-      authedRef.current = false;
-
-      ws.onopen = () => {
-        // Successful connection: reset the backoff so the retry cap
-        // only applies to consecutive failures.
-        reconnectAttempts = 0;
-        const token = getAccessToken();
-        // Order matters: auth should be processed before subscribing_portfolio.
-        if (token) ws.send(JSON.stringify({ type: "auth", token }));
-        ws.send(JSON.stringify({ type: "subscribe_portfolio" }));
-        subscribeMissingMarkets();
+      const current = socket;
+      activeMarkets.clear();
+      subscribedMarkets.clear();
+      let portfolioRequested = false;
+      current.onopen = () => {
+        if (disposed) return;
+        attempts = 0;
+        const token = userId ? getAccessToken() : null;
+        if (token) current.send(JSON.stringify({ type: "auth", token }));
+        updateMarketSubscriptions();
       };
-
-      ws.onmessage = (evt) => {
-        const raw = evt.data;
-        let message: WsInboundMessage;
+      current.onmessage = ({ data }) => {
+        if (disposed || typeof data !== "string") return;
+        let message: unknown;
         try {
-          message = JSON.parse(raw) as WsInboundMessage;
+          message = JSON.parse(data);
         } catch {
           return;
         }
+        if (!isRecord(message) || !isRecord(message.payload)) return;
+        const { type, payload } = message;
 
-        if (!message || typeof message.type !== "string") return;
-
-        if (message.type === "portfolio_update") {
-          invalidateAll();
-          return;
-        }
-
-        if (message.type === "price_update" || message.type === "trade" || message.type === "order_filled") {
-          const payload = message.payload;
-          if (isObject(payload)) {
-            const payloadAny = payload as Record<string, unknown>;
-            const marketIdCandidate =
-              (typeof payloadAny.marketId === "string" ? payloadAny.marketId : undefined) ??
-              (typeof (payloadAny as any).order?.marketId === "string" ? (payloadAny as any).order.marketId : undefined);
-
-            if (typeof marketIdCandidate === "string" && marketIdSetRef.current.has(marketIdCandidate)) {
-              invalidatePositionsOnly();
-              queryClient.invalidateQueries({ queryKey: ["market", marketIdCandidate] });
-              queryClient.invalidateQueries({ queryKey: ["market-stats", marketIdCandidate] });
-              queryClient.invalidateQueries({ queryKey: ["market-price-line", marketIdCandidate] });
-              queryClient.invalidateQueries({ queryKey: ["order-book", marketIdCandidate] });
+        if (type === "subscribed") {
+          if (userId && payload.userId === userId && !portfolioRequested) {
+            portfolioRequested = true;
+            current.send(JSON.stringify({ type: "subscribe_portfolio" }));
+            invalidatePortfolio(true);
+          }
+          if (typeof payload.marketId === "string" && activeMarkets.has(payload.marketId)) {
+            subscribedMarkets.add(payload.marketId);
+            setLive(activeMarkets.size === subscribedMarkets.size);
+            for (const key of ["market", "market-stats", "market-price-line", "order-book"]) {
+              invalidate([key, payload.marketId]);
             }
           }
           return;
         }
 
-        if (message.type === "subscribed" || message.type === "unsubscribed") {
-          const payload = message.payload;
-          if (isObject(payload)) {
-            if ("userId" in payload) authedRef.current = true;
-            if ("channel" in payload && payload.channel === "portfolio") {
-              // No-op. We keep subscribed state implicitly via invalidations.
-            }
-            if ("marketId" in payload && typeof payload.marketId === "string") {
-              subscribedMarketIdsRef.current.add(payload.marketId);
-            }
-          }
-          // If auth completed, make sure portfolio subscriptions are in place.
-          if (authedRef.current) ensurePortfolioSubscriptions();
-          return;
-        }
-      };
+        if (type === "portfolio_update" || type === "order_filled") invalidatePortfolio(true);
+        if (type !== "price_update" && type !== "trade" && type !== "order_filled") return;
 
-      ws.onerror = () => {
-        // Network errors will likely trigger onclose; keep the handler minimal.
+        const marketId = payload.marketId ?? (isRecord(payload.order) ? payload.order.marketId : undefined);
+        if (typeof marketId !== "string" || !desiredMarkets.current.has(marketId)) return;
+        invalidatePortfolio(false);
+        for (const key of ["market", "market-stats", "market-price-line", "order-book"]) invalidate([key, marketId]);
       };
+      current.onclose = scheduleReconnect;
+    }
 
-      ws.onclose = () => {
-        if (cancelled) return;
-        if (reconnectAttempts >= 6) return;
-        const delayMs = Math.min(10000, 500 * 2 ** reconnectAttempts);
-        reconnectTimer = window.setTimeout(connect, delayMs);
-      };
-    };
-
-    syncSubscriptionsRef.current = subscribeMissingMarkets;
+    syncMarkets.current = updateMarketSubscriptions;
     connect();
 
     return () => {
-      cancelled = true;
-      syncSubscriptionsRef.current = null;
-      if (reconnectTimer !== null) window.clearTimeout(reconnectTimer);
-      if (scheduledInvalidateRef.current) window.clearTimeout(scheduledInvalidateRef.current);
-      scheduledInvalidateRef.current = null;
-
-      const ws = wsRef.current;
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        for (const id of subscribedMarketIdsRef.current) {
-          ws.send(JSON.stringify({ type: "unsubscribe_market", marketId: id }));
-        }
-        ws.close(1000, "Client unmounted");
-      } else {
-        ws?.close();
-      }
+      disposed = true;
+      syncMarkets.current = null;
+      window.clearTimeout(reconnectTimer);
+      window.clearTimeout(updateTimer);
+      socket?.close();
     };
-  }, [enabled, queryClient]);
-}
+  }, [enabled, queryClient, user]);
 
+  return live;
+}

@@ -8,8 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useAuth } from "@/auth/AuthContext";
-import { useI18n } from "@/i18n/I18nContext";
+import { useAuth } from "@/auth/useAuth";
+import { useI18n } from "@/i18n/useI18n";
 import { LEGAL_DOCS_VERSION, legalRoutes } from "@/legal/config";
 
 const RegisterSchema = z.object({
@@ -71,7 +71,10 @@ export default function Register() {
     try {
       setSubmitting(true);
       await register({
-        ...parsed.data,
+        email: parsed.data.email,
+        username: parsed.data.username,
+        password: parsed.data.password,
+        displayName: parsed.data.displayName,
         legalConsent: true,
         legalDocsVersion: LEGAL_DOCS_VERSION,
       });

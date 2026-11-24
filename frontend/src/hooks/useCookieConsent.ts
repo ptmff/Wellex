@@ -17,7 +17,13 @@ export function loadConsentState(): ConsentState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return { status: "pending" };
-    return JSON.parse(raw) as ConsentState;
+    const stored = JSON.parse(raw) as ConsentState | null;
+    if (stored?.status === "rejected") return stored;
+    const consent = stored?.status === "accepted" ? stored.consent : undefined;
+    if (typeof consent?.analytics === "boolean" && typeof consent.functional === "boolean") {
+      return { status: "accepted", consent: { ...consent, necessary: true } };
+    }
+    return { status: "pending" };
   } catch {
     return { status: "pending" };
   }

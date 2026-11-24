@@ -1,15 +1,7 @@
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { hasFunctionalConsent } from "@/hooks/useCookieConsent";
 import { dictionaries, type Language } from "./translations";
-
-type I18nContextValue = {
-  language: Language;
-  locale: string;
-  setLanguage: (language: Language) => void;
-  t: (key: string, fallback?: string) => string;
-};
-
-const I18nContext = createContext<I18nContextValue | undefined>(undefined);
+import { I18nContext, type I18nContextValue } from "./useI18n";
 
 const STORAGE_KEY = "wellex-language";
 
@@ -23,6 +15,10 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
       setLanguageState(stored);
     }
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = language;
+  }, [language]);
 
   const setLanguage = (nextLanguage: Language) => {
     setLanguageState(nextLanguage);
@@ -38,10 +34,4 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
   }, [language]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
-}
-
-export function useI18n() {
-  const context = useContext(I18nContext);
-  if (!context) throw new Error("useI18n must be used within I18nProvider");
-  return context;
 }
