@@ -1,0 +1,13 @@
+=== run 1 15:43:23 MSK
+Test Suites: 12 passed, 12 total
+Tests:       102 passed, 102 total
+Time:        17.371 s, estimated 20 s
+=== run 2 15:43:42 MSK
+    ✕ POST /refresh rotates tokens; reusing the old refresh token revokes the whole token family (125 ms)
+Test Suites: 1 failed, 11 passed, 12 total
+Tests:       1 failed, 101 passed, 102 total
+Time:        16.372 s, estimated 18 s
+=== run 3 15:44:00 MSK
+Test Suites: 12 passed, 12 total
+Tests:       102 passed, 102 total
+Time:        16.414 s, estimated 17 s

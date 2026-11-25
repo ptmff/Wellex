@@ -1,0 +1,82 @@
+name: Backend tests
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', '.github/workflows/backend-tests.yml']
+  pull_request:
+    paths: ['backend/**', '.github/workflows/backend-tests.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: prediction_market_test
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: secret
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+
+    env:
+      # Throw-away CI values; the suite refuses to run unless DB_NAME contains "test".
+      NODE_ENV: test
+      DB_HOST: localhost
+      DB_PORT: 5433
+      DB_NAME: prediction_market_test
+      DB_USER: postgres
+      DB_PASSWORD: secret
+      REDIS_HOST: localhost
+      REDIS_PORT: 6379
+      REDIS_DB: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      - name: Type-check sources and tests
+        run: npm run typecheck:test
+
+      - name: Unit + integration + API tests with coverage
+        run: npx jest --coverage --ci 2>&1 | tee jest-output.log; exit ${PIPESTATUS[0]}
+        shell: bash
+
+      - name: Upload coverage and log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: |
+            backend/coverage/
+            backend/jest-output.log
+          retention-days: 14

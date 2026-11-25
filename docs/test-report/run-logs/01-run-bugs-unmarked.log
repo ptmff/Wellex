@@ -1,0 +1,395 @@
+# run: 2026-11-25 15:42:05 MSK | node v24.22.1 | PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu | Redis server v=8.0.2
+# cmd: npx jest --coverage --ci
+FAIL integration test/api/auth.api.test.ts
+  API /auth
+    ✓ POST /register -> 201, returns token pair, creates balance 1000 WX and signup_bonus ledger entry (430 ms)
+    ✓ POST /register: duplicate email -> 409, weak password / no consent -> 422 (371 ms)
+    ✓ POST /login -> 200 with valid credentials; wrong password -> 401 INVALID_CREDENTIALS; unknown email -> 401 (137 ms)
+    ✓ 5 failed logins lock the account for 15 minutes: even the correct password is refused with ACCOUNT_LOCKED (131 ms)
+    ✓ suspended account cannot log in (403 ACCOUNT_SUSPENDED) (111 ms)
+    ✓ POST /refresh rotates tokens; reusing the old refresh token revokes the whole token family (109 ms)
+    ✓ refresh: missing token -> 400, random token -> 401, expired token -> 401 TOKEN_EXPIRED (96 ms)
+    ✕ reuse detection still works when the opportunistic token clean-up has run (revoked tokens are not deleted) (324 ms)
+    ✓ GET /me requires a valid access token (none -> 401, garbage -> TOKEN_INVALID, expired -> TOKEN_EXPIRED) (117 ms)
+    ✓ POST /logout revokes the refresh token and drops the cached user (124 ms)
+    ✓ PATCH /password changes the password and revokes all refresh tokens (651 ms)
+
+  ● API /auth › reuse detection still works when the opportunistic token clean-up has run (revoked tokens are not deleted)
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: "Token reuse detected"
+    Received: "Invalid refresh token"
+
+      139 |     const reuse = await t.api().post(`${API}/auth/refresh`).send({ refreshToken: rt1 });
+      140 |     expect(reuse.status).toBe(401);
+    > 141 |     expect(reuse.body.error.message).toBe('Token reuse detected');
+          |                                      ^
+      142 |     // the attacker's stolen-token replay must invalidate the rotated token as well
+      143 |     expect((await t.api().post(`${API}/auth/refresh`).send({ refreshToken: rt2 })).status).toBe(401);
+      144 |   });
+
+      at Object.<anonymous> (test/api/auth.api.test.ts:141:38)
+
+FAIL integration test/api/realtime-ratelimit.api.test.ts
+  WebSocket /ws
+    ✓ greets a new client with a heartbeat containing clientId and answers ping (169 ms)
+    ✓ auth: invalid token -> error; portfolio subscription requires auth; valid token -> subscribed (157 ms)
+    ✓ market subscribers receive an orderbook price_update after an order is placed via the API (162 ms)
+    ✕ each market event is delivered to a subscriber exactly once (967 ms)
+    ✓ unsubscribed clients stop receiving market events (662 ms)
+  Rate limiting
+    ✓ auth endpoints: 20 requests per 15 min per IP, the 21st gets 429 (155 ms)
+    ✓ trading endpoints: 30 requests per minute, the 31st gets 429 (177 ms)
+    ✕ trading limiter is per user: another user is not throttled by the first user's 30 requests (242 ms)
+
+  ● WebSocket /ws › each market event is delivered to a subscriber exactly once
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 1
+    Received length: 2
+    Received array:  [{"payload": {"marketId": "b357757e-43bb-4566-a761-26ef463237ef", "orderBook": {"marketId": "b357757e-43bb-4566-a761-26ef463237ef", "midPrice": {"no": 0.5, "yes": 0.7}, "noAsks": [], "noBids": [], "spread": {"no": 1, "yes": 0.6}, "timestamp": "2026-11-25T12:42:11.132Z", "yesAsks": [], "yesBids": [{"orderCount": 1, "price": 0.4, "quantity": 2}]}, "type": "orderbook_update"}, "timestamp": "2026-11-25T12:42:11.133Z", "type": "price_update"}, {"payload": {"marketId": "b357757e-43bb-4566-a761-26ef463237ef", "orderBook": {"marketId": "b357757e-43bb-4566-a761-26ef463237ef", "midPrice": {"no": 0.5, "yes": 0.7}, "noAsks": [], "noBids": [], "spread": {"no": 1, "yes": 0.6}, "timestamp": "2026-11-25T12:42:11.132Z", "yesAsks": [], "yesBids": [{"orderCount": 1, "price": 0.4, "quantity": 2}]}, "type": "orderbook_update"}, "timestamp": "2026-11-25T12:42:11.133Z", "type": "price_update"}]
+
+      107 |     await settle(800);
+      108 |     const updates = c.messages.filter((m) => m.type === 'price_update');
+    > 109 |     expect(updates).toHaveLength(1);
+          |                     ^
+      110 |     c.ws.close();
+      111 |   });
+      112 |
+
+      at Object.<anonymous> (test/api/realtime-ratelimit.api.test.ts:109:21)
+
+  ● Rate limiting › trading limiter is per user: another user is not throttled by the first user's 30 requests
+
+    expect(received).not.toBe(expected) // Object.is equality
+
+    Expected: not 429
+
+      167 |     }
+      168 |     const rb = await t.api().post(`${API}/trading/${marketId}/trade`).set(bearer(b.token)).send({ side: 'yes', action: 'buy', amount: 1 });
+    > 169 |     expect(rb.status).not.toBe(429);
+          |                           ^
+      170 |   });
+      171 | });
+      172 |
+
+      at Object.<anonymous> (test/api/realtime-ratelimit.api.test.ts:169:27)
+
+FAIL integration test/integration/orderbook.matching.test.ts
+  OrderBookService — limit orders, reservation, matching
+    ✓ BUY limit reserves qty*price*(1+0.5%) of cash and creates an open order (119 ms)
+    ✓ BUY limit with insufficient cash is rejected and nothing is written (94 ms)
+    ✓ SELL limit without shares is rejected (INSUFFICIENT_SHARES); with shares it reserves them (111 ms)
+    ✓ rejects orders on inactive / closed markets and invalid prices (160 ms)
+    ✓ crossing BUY taker fills at the maker (SELL) price; buyer gets the price-improvement refund; fees 0.5% each side go to the exchange (132 ms)
+    ✓ matching follows price-time priority and supports partial fills (140 ms)
+    ✓ non-crossing orders rest in the book; snapshot aggregates price levels, spread and mid price (164 ms)
+    ✓ a user never matches against his own resting order (self-trade prevention in limit matching) (108 ms)
+    ✓ BUY YES + BUY NO with prices summing to >= 1 mint a pair of shares backed by 1.0 collateral (125 ms)
+    ✕ after a complementary fill the market YES price reflects what the YES buyer paid (between 0.55 and 0.60) (111 ms)
+    ✓ complementary BUY orders whose prices sum to < 1 do not match (105 ms)
+  OrderBookService — cancel and expiry
+    ✓ cancelling a BUY order releases exactly the reserved cash; second cancel fails (109 ms)
+    ✓ only the owner can cancel an order (403 FORBIDDEN), unknown order -> 404 (122 ms)
+    ✓ cancelling a partially filled BUY refunds only the unfilled remainder; filled order cannot be cancelled (113 ms)
+    ✓ cancelling a SELL order releases the reserved shares (128 ms)
+    ✓ expireStaleOrders() expires orders past expires_at and refunds them (118 ms)
+    ✓ expireDueMarkets() moves overdue active markets to "expired" and releases their resting orders (107 ms)
+    ✕ order book snapshot reflects a newly placed order immediately (cache is invalidated on placeOrder) (105 ms)
+
+  ● OrderBookService — limit orders, reservation, matching › after a complementary fill the market YES price reflects what the YES buyer paid (between 0.55 and 0.60)
+
+    expect(received).toBeGreaterThanOrEqual(expected)
+
+    Expected: >= 0.55
+    Received:    0.4
+
+      212 |     const market = await db('markets').where('id', marketId).first();
+      213 |     const yes = Number(market.current_yes_price);
+    > 214 |     expect(yes).toBeGreaterThanOrEqual(0.55);
+          |                 ^
+      215 |     expect(yes).toBeLessThanOrEqual(0.6);
+      216 |   });
+      217 |
+
+      at Object.<anonymous> (test/integration/orderbook.matching.test.ts:214:17)
+
+  ● OrderBookService — cancel and expiry › order book snapshot reflects a newly placed order immediately (cache is invalidated on placeOrder)
+
+    expect(received).toEqual(expected) // deep equality
+
+    - Expected  - 7
+    + Received  + 1
+
+    - Array [
+    -   Object {
+    -     "orderCount": 1,
+    -     "price": 0.42,
+    -     "quantity": 3,
+    -   },
+    - ]
+    + Array []
+
+      319 |     await ob.service.placeOrder(u.id, marketId, { side: 'yes', action: 'buy', price: 0.42, quantity: 3 });
+      320 |     const after = await ob.service.getOrderBook(marketId);
+    > 321 |     expect(after.yesBids).toEqual([{ price: 0.42, quantity: 3, orderCount: 1 }]);
+          |                           ^
+      322 |   });
+      323 | });
+      324 |
+
+      at Object.<anonymous> (test/integration/orderbook.matching.test.ts:321:27)
+
+15:42:16 [error]: Unhandled error select count(*) as "count" from "users" order by "created_at" desc limit $1 - column "users.created_at" must appear in the GROUP BY clause or be used in an aggregate function
+{
+  "stack": "error: select count(*) as \"count\" from \"users\" order by \"created_at\" desc limit $1 - column \"users.created_at\" must appear in the GROUP BY clause or be used in an aggregate function\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "518393fa-68fd-4dda-a683-ea8bdc89c6e4",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "method": "GET"
+}
+15:42:16 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "statusCode": 500,
+  "duration": 8,
+  "ip": "127.0.0.1",
+  "userId": "1f27ea55-13ab-43f6-8245-a21bf733efa0"
+}
+15:42:16 [error]: Unhandled error select "o".*, "m"."title" as "market_title" from "orders" as "o" left join "markets" as "m" on "o"."market_id" = "m"."id" where "o"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"o\".*, \"m\".\"title\" as \"market_title\" from \"orders\" as \"o\" left join \"markets\" as \"m\" on \"o\".\"market_id\" = \"m\".\"id\" where \"o\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "b83e5c76-9dfd-4cf9-9cff-d02f1641e4ef",
+  "url": "/api/v1/orders/not-a-uuid",
+  "method": "GET"
+}
+15:42:16 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/orders/not-a-uuid",
+  "statusCode": 500,
+  "duration": 3,
+  "ip": "127.0.0.1",
+  "userId": "16f0d636-ffcf-48db-abaa-ddd427087263"
+}
+15:42:16 [error]: Unhandled error select "m".*, "c"."name" as "category_name", "c"."slug" as "category_slug", "u"."username" as "creator_username", "u"."display_name" as "creator_display_name" from "markets" as "m" left join "market_categories" as "c" on "m"."category_id" = "c"."id" left join "users" as "u" on "m"."creator_id" = "u"."id" where "m"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"m\".*, \"c\".\"name\" as \"category_name\", \"c\".\"slug\" as \"category_slug\", \"u\".\"username\" as \"creator_username\", \"u\".\"display_name\" as \"creator_display_name\" from \"markets\" as \"m\" left join \"market_categories\" as \"c\" on \"m\".\"category_id\" = \"c\".\"id\" left join \"users\" as \"u\" on \"m\".\"creator_id\" = \"u\".\"id\" where \"m\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "cd1bd698-4383-42fd-b9ca-67cf3a5f0672",
+  "url": "/api/v1/markets/not-a-uuid",
+  "method": "GET"
+}
+15:42:16 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/markets/not-a-uuid",
+  "statusCode": 500,
+  "duration": 2,
+  "ip": "127.0.0.1"
+}
+FAIL integration test/api/trading-flow.api.test.ts
+  API — RBAC
+    ✓ POST /markets: user -> 403, moderator -> 201, anonymous -> 401 (141 ms)
+    ✓ PATCH /markets/:id by a regular user -> 403; by a moderator -> 200 (96 ms)
+    ✓ /admin/*: user -> 403; moderator may resolve markets but not manage users (admin only) (107 ms)
+    ✓ admin bans a user -> the banned user loses API access immediately (user cache invalidated) (102 ms)
+    ✕ GET /admin/users (admin) returns the paginated user list (104 ms)
+  API — orders, trades, resolution, economy
+    ✓ limit order flow: place SELL + crossing BUY via API -> trade at maker price; GET /orders shows both filled (172 ms)
+    ✓ order validation and ownership: price >= 1 -> 422, foreign order -> 403, cancel own order -> 200 (197 ms)
+    ✕ malformed ids are client errors: GET /orders/not-a-uuid and GET /markets/not-a-uuid -> 4xx, not 500 (132 ms)
+    ✓ market trade via API: quote, then trade with slippage guard (positive and negative) (170 ms)
+    ✓ admin resolves a market via API -> winners are paid, market cache is invalidated (160 ms)
+    ✓ economy via API: daily bonus 200 then 429; ad session 201; purchase 201; /economy/me (157 ms)
+    ✓ GET /health and /health/detailed report database and redis as ok; unknown route -> 404 (133 ms)
+
+  ● API — RBAC › GET /admin/users (admin) returns the paginated user list
+
+    expect(received).toBe(expected) // Object.is equality
+
+    Expected: 200
+    Received: 500
+
+      79 |     await createUser();
+      80 |     const r = await t.api().get(`${API}/admin/users?page=1&limit=10`).set(bearer(admin.token));
+    > 81 |     expect(r.status).toBe(200);
+         |                      ^
+      82 |     expect(r.body.data.total).toBe(2);
+      83 |   });
+      84 | });
+
+      at Object.<anonymous> (test/api/trading-flow.api.test.ts:81:22)
+
+  ● API — orders, trades, resolution, economy › malformed ids are client errors: GET /orders/not-a-uuid and GET /markets/not-a-uuid -> 4xx, not 500
+
+    expect(received).toBeLessThan(expected)
+
+    Expected: < 500
+    Received:   500
+
+      140 |     const m = await t.api().get(`${API}/markets/not-a-uuid`);
+      141 |     expect(o.status).toBeGreaterThanOrEqual(400);
+    > 142 |     expect(o.status).toBeLessThan(500);
+          |                      ^
+      143 |     expect(m.status).toBeGreaterThanOrEqual(400);
+      144 |     expect(m.status).toBeLessThan(500);
+      145 |   });
+
+      at Object.<anonymous> (test/api/trading-flow.api.test.ts:142:22)
+
+FAIL integration test/integration/orderbook.market-trade.test.ts
+  OrderBookService — market trades and slippage
+    ✓ quote sweeps the book: budget 8 WX buys 10 @0.50 + the rest @0.60, fee included (154 ms)
+    ✓ market BUY whose average price deviates more than maxSlippage from expectedPrice is rejected and fully rolled back (112 ms)
+    ✓ market BUY within tolerance executes exactly as quoted (shares, cost, fee) and pays makers at their prices (124 ms)
+    ✓ market BUY: no liquidity -> INVALID_TRADE_AMOUNT; amount below minimum -> MIN_TRADE_AMOUNT; not enough cash -> INSUFFICIENT_BALANCE (108 ms)
+    ✓ market SELL fills against best bids, credits proceeds minus 0.5% and un-reserves the unfilled part (104 ms)
+    ✓ market SELL with more shares than owned is rejected (90 ms)
+    ✕ a market BUY never fills against the same user's resting SELL order (no wash trades) (104 ms)
+    ✕ market BUY where the budget is the binding constraint is executed (2 WX against an ask 10 @0.50) (96 ms)
+  OrderBookService — market resolution
+    ✓ YES outcome pays 1.0 WX per winning share from the collateral pool, zeroes positions and cancels resting orders (129 ms)
+    ✓ a market cannot be resolved twice (MARKET_ALREADY_RESOLVED); unknown market -> 404 (120 ms)
+    ✓ INVALID outcome refunds every participant his net principal (fees excluded) (102 ms)
+
+  ● OrderBookService — market trades and slippage › a market BUY never fills against the same user's resting SELL order (no wash trades)
+
+    expect(received).toHaveLength(expected)
+
+    Expected length: 0
+    Received length: 1
+    Received array:  [{"buyer_id": "e66b08c1-6692-41b4-85f5-315383d3db48", "buyer_order_id": null, "executed_at": 2026-11-25T12:42:18.682Z, "fee": "0.02985075", "id": "2d49c26f-802a-40e4-bc03-1a8089040eac", "market_id": "c321a4b0-ab9e-48d5-b052-0e86dca45825", "metadata": {"orderBook": true, "taker": true}, "price": "0.50000000", "price_impact": "0.00000000", "quantity": "5.97014925", "seller_id": "e66b08c1-6692-41b4-85f5-315383d3db48", "seller_order_id": "a8ea9028-cfff-4af8-a750-a39e21b87381", "side": "yes", "total_value": "2.98507463", "trade_type": "order_book", "yes_price_after": "0.50000000", "yes_price_before": "0.50000000"}]
+
+      124 |
+      125 |     const selfTrades = await db('trades').whereRaw('buyer_id = seller_id');
+    > 126 |     expect(selfTrades).toHaveLength(0);
+          |                        ^
+      127 |   });
+      128 |
+      129 |   it('market BUY where the budget is the binding constraint is executed (2 WX against an ask 10 @0.50)', async () => {
+
+      at Object.<anonymous> (test/integration/orderbook.market-trade.test.ts:126:24)
+
+  ● OrderBookService — market trades and slippage › market BUY where the budget is the binding constraint is executed (2 WX against an ask 10 @0.50)
+
+    AppError: No enough liquidity to execute market buy
+
+      1328 |
+      1329 |         if (totalShares.lte(EPS)) {
+    > 1330 |           throw new AppError(ErrorCode.INVALID_TRADE_AMOUNT, 'No enough liquidity to execute market buy', 400);
+           |                 ^
+      1331 |         }
+      1332 |       } else {
+      1333 |         // action === 'sell': amount is shares to sell
+
+      at src/modules/orders/orderbook.service.ts:1330:17
+
+FAIL integration test/integration/portfolio.pnl.test.ts
+  PortfolioService — PnL
+    ✓ unrealized PnL = (current price - average price) * quantity, also in percent (112 ms)
+    ✓ portfolio is cached in Redis (pm:portfolio:portfolio:<userId>, TTL <= 10s) (133 ms)
+    ✕ right after buying at the market price the total PnL equals only the paid fee (cost is not counted as a loss) (121 ms)
+    ✓ PnL summary: trading stats and resolution payouts after a resolved market (134 ms)
+    ✓ balance history is paginated and filterable by type (127 ms)
+
+  ● PortfolioService — PnL › right after buying at the market price the total PnL equals only the paid fee (cost is not counted as a loss)
+
+    expect(received).toBeCloseTo(expected, precision)
+
+    Expected: -0.0275
+    Received: -5.5275
+
+    Expected precision:    4
+    Expected difference: < 0.00005
+    Received difference:   5.5
+
+      58 |     const p: any = await portfolio.getPortfolio(buyer.id);
+      59 |     // bought 10 YES for 5.5 + 0.0275 fee, market price is still 0.55 -> true PnL is -0.0275
+    > 60 |     expect(p.pnl.total).toBeCloseTo(-5.5 * FEE, 4);
+         |                         ^
+      61 |   });
+      62 |
+      63 |   it('PnL summary: trading stats and resolution payouts after a resolved market', async () => {
+
+      at Object.<anonymous> (test/integration/portfolio.pnl.test.ts:60:25)
+
+PASS integration test/api/read-endpoints.api.test.ts
+  API — read endpoints on a traded market
+    ✓ markets: list (filters, sorting), categories, details, stats (280 ms)
+    ✓ market comments: add (auth), list, delete by author; foreign delete -> 403 (243 ms)
+    ✓ users: profile, me, update profile, search, leaderboard (284 ms)
+    ✓ portfolio: summary, positions, trades, balance history, pnl (234 ms)
+    ✓ analytics: candles, price line, volume, platform metrics; candle aggregation job (250 ms)
+    ✓ activity feeds and notifications (order_filled for both sides) (235 ms)
+
+PASS unit test/unit/dto-wallet-auth.unit.test.ts
+  DTO validation (zod schemas from src)
+    ✓ PlaceLimitOrderDto: price strictly inside (0,1), positive quantity, enums (2 ms)
+    ✓ RegisterDto: email normalised to lower case, password policy, legal consent required (1 ms)
+    ✓ CreateMarketDto: market must close at least 1 hour from now
+  wallet / payment provider
+    ✓ assertHasCash throws InsufficientBalanceError only when available < required (5 ms)
+    ✓ mock payment provider succeeds instantly and is selected by PAYMENT_PROVIDER=mock (1 ms)
+  AuthService.verifyAccessToken
+    ✓ accepts tokens signed with JWT_ACCESS_SECRET and distinguishes expired / invalid tokens (5 ms)
+
+PASS integration test/integration/economy.test.ts
+  EconomyService — daily bonus
+    ✓ first claim credits DAILY_BONUS_AMOUNT (25 WX) with streak 1; second claim the same day is rejected (66 ms)
+    ✓ claiming on consecutive days increases the streak (57 ms)
+    ✓ concurrent claims are serialized: exactly one of 5 parallel requests succeeds (76 ms)
+  EconomyService — rewarded ad sessions
+    ✓ session is stored in Redis with TTL 600s; a premature claim is rejected without burning the session (70 ms)
+    ✓ after the minimum watch time the reward is credited once; the session cannot be reused (53 ms)
+    ✓ a session of another user is rejected with 403 (50 ms)
+    ✓ cooldown after a reward and the daily limit block new sessions (429) (56 ms)
+  EconomyService — purchases and wallet
+    ✓ mock provider purchase of "starter" credits 500 WX immediately; unknown package -> 404 (57 ms)
+    ✓ status aggregates balance, ad availability and daily bonus (49 ms)
+    ✓ creditWx / debitWx keep the ledger consistent and refuse invalid amounts (59 ms)
+
+PASS integration test/integration/cache.service.test.ts
+  CacheService on Redis
+    ✓ set/get/del with namespace prefix and TTL (68 ms)
+    ✓ getOrSet calls the fetcher only on a cache miss (109 ms)
+    ✓ delPattern removes all matching keys (46 ms)
+    ✓ distributed lock: second acquire fails until the owner releases it; a foreign token cannot release (41 ms)
+    ✓ sliding-window rate limit allows `limit` hits and blocks the next one (47 ms)
+    ✓ sorted-set helpers keep members ordered by score (73 ms)
+
+PASS unit test/unit/errors.unit.test.ts
+  common/errors
+    ✓ error classes carry code and HTTP status (1 ms)
+    ✓ errorHandler: ZodError -> 422 with field details (1 ms)
+    ✓ errorHandler: AppError keeps its status/code; PG unique violation -> 409; FK violation -> 400; unknown -> 500 (3 ms)
+
+PASS unit test/unit/guards-middleware.unit.test.ts
+  common/guards — RBAC
+    ✓ requireRole uses the hierarchy user < moderator < admin (1 ms)
+    ✓ requireAdminKey compares the X-Admin-Key header with ADMIN_SECRET_KEY (1 ms)
+    ✓ requireOwnerOrAdmin lets the owner and admins through, rejects others
+  common/middleware
+    ✓ validate() replaces the source with parsed data or forwards a 422 ValidationError (1 ms)
+    ✓ sanitizeResponse() strips password_hash / email tokens recursively and serialises dates
+    ✓ requestId() attaches a UUID (1 ms)
+
+
+=============================== Coverage summary ===============================
+Statements   : 74.35% ( 2033/2734 )
+Branches     : 44.66% ( 481/1077 )
+Functions    : 73.53% ( 264/359 )
+Lines        : 78.15% ( 1993/2550 )
+================================================================================
+Jest: "global" coverage threshold for branches (60%) not met: 44.66%
+Test Suites: 6 failed, 6 passed, 12 total
+Tests:       10 failed, 92 passed, 102 total
+Snapshots:   0 total
+Time:        17.312 s, estimated 24 s
+Ran all test suites in 2 projects.
+Test results written to: ../docs/test-report/logs/01-run-bugs-unmarked.json
+
+real	0m19.190s
+user	0m9.777s
+sys	0m0.960s
