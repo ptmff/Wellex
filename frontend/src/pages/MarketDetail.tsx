@@ -206,6 +206,20 @@ function MarketDetailContent({ id }: { id?: string }) {
     );
   }
 
+  const ru = language === "ru";
+  const resolved = market.status === "resolved";
+  const outcomeLabel = market.outcome === "yes"
+    ? ru ? "Исход: ДА (YES)" : "Outcome: YES"
+    : market.outcome === "no"
+      ? ru ? "Исход: НЕТ (NO)" : "Outcome: NO"
+      : market.outcome === "invalid"
+        ? ru ? "Рынок признан недействительным" : "Market voided"
+        : ru ? "Результат пока недоступен" : "Result unavailable";
+  const description = market.description?.trim();
+  const criteria = market.resolutionCriteria?.trim();
+  const resolutionNote = market.resolutionNote?.trim();
+  const resolvedDate = parseDate(market.resolvedAt);
+
   return (
     <AppLayout>
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.3 }}>
@@ -245,10 +259,12 @@ function MarketDetailContent({ id }: { id?: string }) {
               <h1 className="text-xl sm:text-2xl font-bold mb-3 [overflow-wrap:anywhere]">{market.title}</h1>
 
               <div className="flex items-center gap-6 flex-wrap">
-                <div>
-                  <span className={`text-3xl font-bold ${probColor}`}>{probabilityPct}%</span>
-                  <span className="text-xs text-muted-foreground ml-1.5">{language === "ru" ? "шанс" : "chance"}</span>
-                </div>
+                {!resolved && (
+                  <div>
+                    <span className={`text-3xl font-bold ${probColor}`}>{probabilityPct}%</span>
+                    <span className="text-xs text-muted-foreground ml-1.5">{ru ? "шанс" : "chance"}</span>
+                  </div>
+                )}
 
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
@@ -286,7 +302,37 @@ function MarketDetailContent({ id }: { id?: string }) {
                   <Share2 className="h-4 w-4" />
                 </button>
               </div>
+
+              {resolved && (
+                <section className="mt-3 space-y-1 rounded-lg bg-secondary/60 p-3" aria-labelledby="market-outcome">
+                  <h2 id="market-outcome" className="text-sm font-semibold">{outcomeLabel}</h2>
+                  {resolvedDate && (
+                    <p className="text-xs text-muted-foreground">
+                      {ru ? "Дата определения результата" : "Resolved on"}{" "}
+                      <time dateTime={resolvedDate.toISOString()}>{resolvedDate.toLocaleDateString(locale, { dateStyle: "long" })}</time>
+                    </p>
+                  )}
+                  {resolutionNote && <p className="whitespace-pre-wrap text-sm [overflow-wrap:anywhere]">{resolutionNote}</p>}
+                </section>
+              )}
             </div>
+
+            <details className="rounded-xl border border-border/50 bg-card">
+              <summary className="min-h-11 cursor-pointer rounded-xl px-4 py-3 text-sm font-semibold">
+                {ru ? "Описание и правила рынка" : "Market description and rules"}
+              </summary>
+              <div className="space-y-3 border-t border-border/50 px-4 py-3 text-sm">
+                {description && (
+                  <p className="whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">{description}</p>
+                )}
+                <div>
+                  <h2 className="mb-1 font-medium">{ru ? "Как определяется исход" : "How the outcome is determined"}</h2>
+                  <p className="whitespace-pre-wrap text-muted-foreground [overflow-wrap:anywhere]">
+                    {criteria || (ru ? "Критерии определения исхода пока не опубликованы." : "Resolution criteria have not been published yet.")}
+                  </p>
+                </div>
+              </div>
+            </details>
 
             <Button asChild className="w-full min-h-11 lg:hidden">
               <a href="#market-trading" onClick={(event) => {
@@ -295,7 +341,7 @@ function MarketDetailContent({ id }: { id?: string }) {
                 event.preventDefault();
                 target.focus({ preventScroll: true });
                 target.scrollIntoView({ block: "start" });
-              }}>{language === "ru" ? "Перейти к торговле" : "Go to trading"}</a>
+              }}>{tradingBlocked ? ru ? "Посмотреть стакан" : "View order book" : ru ? "Перейти к торговле" : "Go to trading"}</a>
             </Button>
 
             {/* Chart */}
@@ -401,7 +447,6 @@ function MarketDetailContent({ id }: { id?: string }) {
                       year: "numeric",
                     }),
                   },
-                  { label: language === "ru" ? "Резолюция" : "Resolution", value: market.resolutionCriteria ? market.resolutionCriteria : "Oracle" },
                 ].map((item) => (
                   <div key={item.label} className="flex justify-between gap-3">
                     <span className="text-muted-foreground">{item.label}</span>

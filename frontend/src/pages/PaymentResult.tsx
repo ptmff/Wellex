@@ -29,7 +29,6 @@ export default function PaymentResult() {
 
   useEffect(() => {
     if (status !== "succeeded") return;
-    void client.invalidateQueries({ queryKey: accountKey(userId, "economy-me") });
     void invalidatePortfolio(client, userId);
   }, [client, purchaseId, status, userId]);
 

@@ -1,16 +1,25 @@
 import { accountKey, invalidatePortfolio } from "@/auth/accountQueries";
 import { useId, useState } from "react";
 import { motion } from "framer-motion";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "@/auth/useAuth";
-import { cancelOrder, getMyOrders, getOrderBook, placeOrder, type OrderAction, type PlaceOrderInput } from "@/api/orders";
+import { getEconomyStatus } from "@/api/economy";
+import {
+  ACTIVE_ORDER_STATUSES,
+  cancelOrder,
+  getMyOrders,
+  getOrderBook,
+  placeOrder,
+  type ActiveOrderStatus,
+  type OrderAction,
+  type PlaceOrderInput,
+} from "@/api/orders";
 import { useI18n } from "@/i18n/useI18n";
 import { formatWx } from "@/lib/money";
 import { Link, useLocation } from "react-router-dom";
 import { QueryError } from "@/components/QueryError";
 import { Button } from "@/components/ui/button";
-import type { PortfolioSummaryResponse } from "@/lib/portfolio";
 
 interface TradePanelProps {
   marketId: string;
@@ -20,6 +29,10 @@ interface TradePanelProps {
   closesAt?: number;
   live: boolean;
 }
+
+type ActiveOrdersPage = { page: number; statuses: readonly ActiveOrderStatus[] };
+
+const activeOrdersFirstPage: ActiveOrdersPage = { page: 1, statuses: ACTIVE_ORDER_STATUSES };
 
 export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedReason, closesAt, live }: TradePanelProps) {
   const queryClient = useQueryClient();
@@ -78,12 +91,14 @@ export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedR
   const quickPrices = [0.4, 0.5, 0.6, 0.7];
   const quickQty = [1, 5, 10, 25];
 
-  const portfolioQuery = useQuery({
-    queryKey: accountKey(user?.id, "portfolio"),
-    queryFn: () => request<PortfolioSummaryResponse>("/portfolio", { method: "GET" }),
-    enabled: !!request && !!user,
+  const balanceQuery = useQuery({
+    queryKey: accountKey(user?.id, "economy-me"),
+    queryFn: () => getEconomyStatus(request),
+    select: (status) => status.available,
+    enabled: !!user,
+    refetchInterval: 30_000,
   });
-  const availableWx = portfolioQuery.data?.balance.available;
+  const availableWx = balanceQuery.data;
 
   const orderBookQuery = useQuery({
     queryKey: ["order-book", marketId],
@@ -92,11 +107,26 @@ export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedR
     refetchInterval: live ? 15_000 : 5000,
   });
 
-  const myOrdersQuery = useQuery({
+  const myOrdersQuery = useInfiniteQuery({
     queryKey: accountKey(user?.id, "my-orders", marketId),
-    queryFn: () => getMyOrders(request, { marketId, page: 1, limit: 20 }),
-    enabled: !!marketId && !!request && !!user,
-    refetchInterval: live ? 15_000 : 5000,
+    initialPageParam: activeOrdersFirstPage,
+    queryFn: async ({ pageParam: { page, statuses }, signal }) => {
+      const results = await Promise.all(statuses.map(async (status) => ({
+        status,
+        result: await getMyOrders(request, { marketId, page, limit: 20, status }, signal),
+      })));
+      return {
+        orders: results.flatMap(({ result }) =>
+          result.data.filter((order) => ACTIVE_ORDER_STATUSES.some((status) => status === order.status)),
+        ),
+        remainingStatuses: results.filter(({ result }) => page < result.totalPages).map(({ status }) => status),
+        page,
+      };
+    },
+    getNextPageParam: ({ page, remainingStatuses }): ActiveOrdersPage | undefined =>
+      remainingStatuses.length ? { page: page + 1, statuses: remainingStatuses } : undefined,
+    enabled: !!marketId && !!user,
+    refetchInterval: (query) => (query.state.data?.pages.length ?? 0) > 1 || live ? 30_000 : 15_000,
   });
 
   const cancelMutation = useMutation({
@@ -119,8 +149,10 @@ export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedR
   const book = orderBookQuery.data;
   const bids = (sideApi === "yes" ? book?.yesBids : book?.noBids) ?? [];
   const asks = (sideApi === "yes" ? book?.yesAsks : book?.noAsks) ?? [];
+  const loadedOrders = myOrdersQuery.data?.pages.flatMap(({ orders }) => orders) ?? [];
   const myOpenOrders = user
-    ? (myOrdersQuery.data?.data ?? []).filter((order) => ["open", "partially_filled", "pending"].includes(order.status))
+    ? [...new Map(loadedOrders.map((order) => [order.id, order])).values()]
+      .sort((first, second) => (second.createdAt ?? "").localeCompare(first.createdAt ?? ""))
     : [];
 
   return (
@@ -285,6 +317,13 @@ export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedR
         </motion.button>
       )}
       </form>
+      {user && balanceQuery.isError && (
+        <QueryError
+          message={language === "ru" ? "Не удалось обновить баланс." : "Could not update your balance."}
+          retry={() => void balanceQuery.refetch()}
+          busy={balanceQuery.isFetching}
+        />
+      )}
       {user && !blockedReason && action === "buy" && availableWx === 0 ? (
         <Link to="/shop" className="mt-2 block text-center text-xs text-primary hover:underline">
           {language === "ru" ? "Баланс пуст — магазин и реклама" : "Empty balance — shop or watch an ad"}
@@ -355,21 +394,30 @@ export function TradePanel({ marketId, currentYesPrice, currentNoPrice, blockedR
               </div>
             </div>
           ))}
-          {!user ? <div className="text-xs text-muted-foreground">{language === "ru" ? "Войдите, чтобы увидеть ордера" : "Login to view your orders"}</div> : null}
-          {user && myOrdersQuery.isLoading && (
-            <div role="status" className="text-xs text-muted-foreground">{language === "ru" ? "Загружаем ордера…" : "Loading orders…"}</div>
-          )}
-          {user && myOrdersQuery.isError && (
-            <QueryError
-              message={language === "ru" ? "Не удалось обновить ордера." : "Could not update your orders."}
-              retry={() => void myOrdersQuery.refetch()}
-              busy={myOrdersQuery.isFetching}
-            />
-          )}
-          {user && myOrdersQuery.isSuccess && myOpenOrders.length === 0 ? (
-            <div className="text-xs text-muted-foreground">{language === "ru" ? "Нет открытых ордеров" : "No open orders"}</div>
-          ) : null}
         </div>
+        {!user && <p className="text-xs text-muted-foreground">{language === "ru" ? "Войдите, чтобы увидеть ордера" : "Log in to view your orders"}</p>}
+        {user && myOrdersQuery.isLoading && (
+          <p role="status" className="text-xs text-muted-foreground">{language === "ru" ? "Загружаем ордера…" : "Loading orders…"}</p>
+        )}
+        {user && myOrdersQuery.isError && (
+          <QueryError
+            message={myOrdersQuery.isFetchNextPageError
+              ? language === "ru" ? "Не удалось загрузить следующие ордера." : "Could not load more orders."
+              : language === "ru" ? "Не удалось обновить ордера." : "Could not update your orders."}
+            retry={() => void (myOrdersQuery.isFetchNextPageError ? myOrdersQuery.fetchNextPage() : myOrdersQuery.refetch())}
+            busy={myOrdersQuery.isFetching}
+          />
+        )}
+        {user && myOrdersQuery.isSuccess && !myOrdersQuery.hasNextPage && myOpenOrders.length === 0 && (
+          <p className="text-xs text-muted-foreground">{language === "ru" ? "Нет открытых ордеров" : "No open orders"}</p>
+        )}
+        {user && myOrdersQuery.hasNextPage && !myOrdersQuery.isFetchNextPageError && (
+          <Button variant="outline" className="mt-3 min-h-11 w-full" disabled={myOrdersQuery.isFetching} onClick={() => void myOrdersQuery.fetchNextPage()}>
+            {myOrdersQuery.isFetchingNextPage
+              ? language === "ru" ? "Загружаем ордера…" : "Loading orders…"
+              : language === "ru" ? "Показать ещё ордера" : "Show more orders"}
+          </Button>
+        )}
       </div>
     </div>
   );

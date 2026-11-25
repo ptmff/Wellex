@@ -2,6 +2,8 @@ import type { AuthRequest } from "./markets";
 
 export type OrderSide = "yes" | "no";
 export type OrderAction = "buy" | "sell";
+export const ACTIVE_ORDER_STATUSES = ["open", "partially_filled", "pending"] as const;
+export type ActiveOrderStatus = (typeof ACTIVE_ORDER_STATUSES)[number];
 
 export type PlaceOrderInput = {
   side: OrderSide;
@@ -66,6 +68,7 @@ export type PaginatedResult<T> = {
 export async function getMyOrders(
   request: AuthRequest,
   params: { marketId?: string; page?: number; limit?: number; status?: string } = {},
+  signal?: AbortSignal,
 ) {
   const qs = new URLSearchParams();
   if (params.marketId) qs.set("marketId", params.marketId);
@@ -77,6 +80,7 @@ export async function getMyOrders(
   return request<PaginatedResult<PlacedOrder>>(`/orders${suffix}`, {
     method: "GET",
     authRequired: true,
+    signal,
   });
 }
 

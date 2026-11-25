@@ -6,7 +6,7 @@ export function accountKey(userId: string | undefined, ...parts: (string | numbe
 
 export function invalidatePortfolio(client: QueryClient, userId: string | undefined) {
   return Promise.all(
-    ["portfolio", "portfolio-positions", "portfolio-pnl", "portfolio-trades", "portfolio-balance-history"].map(
+    ["portfolio", "portfolio-positions", "portfolio-pnl", "portfolio-trades", "portfolio-balance-history", "economy-me"].map(
       (key) => client.invalidateQueries({ queryKey: accountKey(userId, key) }),
     ),
   );

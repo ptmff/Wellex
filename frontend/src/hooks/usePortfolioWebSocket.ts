@@ -57,7 +57,7 @@ export function usePortfolioWebSocket({
     function invalidatePortfolio(includeHistory: boolean) {
       if (!userId) return;
       const keys = ["portfolio", "portfolio-positions", "portfolio-pnl"];
-      if (includeHistory) keys.push("portfolio-trades", "portfolio-balance-history", "my-orders");
+      if (includeHistory) keys.push("portfolio-trades", "portfolio-balance-history", "my-orders", "economy-me");
       for (const key of keys) invalidate(accountKey(userId, key));
     }
 

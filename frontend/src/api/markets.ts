@@ -33,7 +33,7 @@ export type BackendMarket = {
   resolutionCriteria: string;
   imageUrl: string | null;
   status: "pending" | "active" | "paused" | "resolved" | "cancelled" | "expired";
-  outcome: unknown; // depends on backend; keep flexible for now
+  outcome: "yes" | "no" | "invalid" | null;
   category: BackendMarketCategory | null;
   creator: BackendMarketCreator | null;
   prices: BackendMarketPrices;
