@@ -1,0 +1,279 @@
+# run: 2026-11-25 15:49:01 MSK | node v20.20.2 (CI target) | npm ci from package-lock.json | PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu | Redis server v=8.0.2
+# cmd: npm run typecheck:test && npx jest --coverage --ci
+
+> prediction-market-backend@1.0.0 typecheck:test
+> tsc -p tsconfig.test.json
+
+PASS integration test/api/auth.api.test.ts
+  API /auth
+    ✓ POST /register -> 201, returns token pair, creates balance 1000 WX and signup_bonus ledger entry (442 ms)
+    ✓ POST /register: duplicate email -> 409, weak password / no consent -> 422 (393 ms)
+    ✓ POST /login -> 200 with valid credentials; wrong password -> 401 INVALID_CREDENTIALS; unknown email -> 401 (125 ms)
+    ✓ 5 failed logins lock the account for 15 minutes: even the correct password is refused with ACCOUNT_LOCKED (133 ms)
+    ✓ suspended account cannot log in (403 ACCOUNT_SUSPENDED) (93 ms)
+    ✓ POST /refresh rotates tokens; reusing the old refresh token revokes the whole token family (120 ms)
+    ✓ refresh: missing token -> 400, random token -> 401, expired token -> 401 TOKEN_EXPIRED (114 ms)
+    ✓ [BUG-06] reuse detection still works when the opportunistic token clean-up has run (revoked tokens are not deleted) (322 ms)
+    ✓ GET /me requires a valid access token (none -> 401, garbage -> TOKEN_INVALID, expired -> TOKEN_EXPIRED) (114 ms)
+    ✓ POST /logout revokes the refresh token and drops the cached user (131 ms)
+    ✓ PATCH /password changes the password and revokes all refresh tokens (629 ms)
+
+PASS integration test/api/realtime-ratelimit.api.test.ts
+  WebSocket /ws
+    ✓ greets a new client with a heartbeat containing clientId and answers ping (175 ms)
+    ✓ auth: invalid token -> error; portfolio subscription requires auth; valid token -> subscribed (163 ms)
+    ✓ market subscribers receive an orderbook price_update after an order is placed via the API (166 ms)
+    ✓ [BUG-09] each market event is delivered to a subscriber exactly once (960 ms)
+    ✓ unsubscribed clients stop receiving market events (688 ms)
+  Rate limiting
+    ✓ auth endpoints: 20 requests per 15 min per IP, the 21st gets 429 (229 ms)
+    ✓ trading endpoints: 30 requests per minute, the 31st gets 429 (246 ms)
+    ✓ [BUG-10] trading limiter is per user: another user is not throttled by the first user's 30 requests (303 ms)
+
+PASS integration test/integration/orderbook.matching.test.ts
+  OrderBookService — limit orders, reservation, matching
+    ✓ BUY limit reserves qty*price*(1+0.5%) of cash and creates an open order (188 ms)
+    ✓ BUY limit with insufficient cash is rejected and nothing is written (111 ms)
+    ✓ SELL limit without shares is rejected (INSUFFICIENT_SHARES); with shares it reserves them (105 ms)
+    ✓ rejects orders on inactive / closed markets and invalid prices (167 ms)
+    ✓ crossing BUY taker fills at the maker (SELL) price; buyer gets the price-improvement refund; fees 0.5% each side go to the exchange (122 ms)
+    ✓ matching follows price-time priority and supports partial fills (119 ms)
+    ✓ non-crossing orders rest in the book; snapshot aggregates price levels, spread and mid price (158 ms)
+    ✓ a user never matches against his own resting order (self-trade prevention in limit matching) (117 ms)
+    ✓ BUY YES + BUY NO with prices summing to >= 1 mint a pair of shares backed by 1.0 collateral (122 ms)
+    ✓ [BUG-02] after a complementary fill the market YES price reflects what the YES buyer paid (between 0.55 and 0.60) (113 ms)
+    ✓ complementary BUY orders whose prices sum to < 1 do not match (120 ms)
+  OrderBookService — cancel and expiry
+    ✓ cancelling a BUY order releases exactly the reserved cash; second cancel fails (104 ms)
+    ✓ only the owner can cancel an order (403 FORBIDDEN), unknown order -> 404 (98 ms)
+    ✓ cancelling a partially filled BUY refunds only the unfilled remainder; filled order cannot be cancelled (115 ms)
+    ✓ cancelling a SELL order releases the reserved shares (110 ms)
+    ✓ expireStaleOrders() expires orders past expires_at and refunds them (130 ms)
+    ✓ expireDueMarkets() moves overdue active markets to "expired" and releases their resting orders (108 ms)
+    ✓ [BUG-01] order book snapshot reflects a newly placed order immediately (cache is invalidated on placeOrder) (118 ms)
+
+15:49:15 [error]: Unhandled error select count(*) as "count" from "users" order by "created_at" desc limit $1 - column "users.created_at" must appear in the GROUP BY clause or be used in an aggregate function
+{
+  "stack": "error: select count(*) as \"count\" from \"users\" order by \"created_at\" desc limit $1 - column \"users.created_at\" must appear in the GROUP BY clause or be used in an aggregate function\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:524:28)\n    at addChunk (node:internal/streams/readable:561:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)\n    at Socket.Readable.push (node:internal/streams/readable:392:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:191:23)",
+  "requestId": "58d7abff-c48c-4693-bd5a-5a2e73e6ced6",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "method": "GET"
+}
+15:49:15 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "statusCode": 500,
+  "duration": 7,
+  "ip": "127.0.0.1",
+  "userId": "46538db6-7843-4e33-8020-bebbac818e3c"
+}
+15:49:15 [error]: Unhandled error select "o".*, "m"."title" as "market_title" from "orders" as "o" left join "markets" as "m" on "o"."market_id" = "m"."id" where "o"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"o\".*, \"m\".\"title\" as \"market_title\" from \"orders\" as \"o\" left join \"markets\" as \"m\" on \"o\".\"market_id\" = \"m\".\"id\" where \"o\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:524:28)\n    at addChunk (node:internal/streams/readable:561:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)\n    at Socket.Readable.push (node:internal/streams/readable:392:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:191:23)",
+  "requestId": "1d80f703-6dc1-4006-b041-d756188e46a1",
+  "url": "/api/v1/orders/not-a-uuid",
+  "method": "GET"
+}
+15:49:15 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/orders/not-a-uuid",
+  "statusCode": 500,
+  "duration": 2,
+  "ip": "127.0.0.1",
+  "userId": "2e1921da-147d-412d-9281-85a4416fafa8"
+}
+15:49:15 [error]: Unhandled error select "m".*, "c"."name" as "category_name", "c"."slug" as "category_slug", "u"."username" as "creator_username", "u"."display_name" as "creator_display_name" from "markets" as "m" left join "market_categories" as "c" on "m"."category_id" = "c"."id" left join "users" as "u" on "m"."creator_id" = "u"."id" where "m"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"m\".*, \"c\".\"name\" as \"category_name\", \"c\".\"slug\" as \"category_slug\", \"u\".\"username\" as \"creator_username\", \"u\".\"display_name\" as \"creator_display_name\" from \"markets\" as \"m\" left join \"market_categories\" as \"c\" on \"m\".\"category_id\" = \"c\".\"id\" left join \"users\" as \"u\" on \"m\".\"creator_id\" = \"u\".\"id\" where \"m\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:524:28)\n    at addChunk (node:internal/streams/readable:561:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:512:3)\n    at Socket.Readable.push (node:internal/streams/readable:392:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:191:23)",
+  "requestId": "1cf3998c-4467-4fb0-b6ca-f1eb695c01e8",
+  "url": "/api/v1/markets/not-a-uuid",
+  "method": "GET"
+}
+15:49:15 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/markets/not-a-uuid",
+  "statusCode": 500,
+  "duration": 2,
+  "ip": "127.0.0.1"
+}
+PASS integration test/api/trading-flow.api.test.ts
+  API — RBAC
+    ✓ POST /markets: user -> 403, moderator -> 201, anonymous -> 401 (141 ms)
+    ✓ PATCH /markets/:id by a regular user -> 403; by a moderator -> 200 (129 ms)
+    ✓ /admin/*: user -> 403; moderator may resolve markets but not manage users (admin only) (116 ms)
+    ✓ admin bans a user -> the banned user loses API access immediately (user cache invalidated) (112 ms)
+    ✓ [BUG-07] GET /admin/users (admin) returns the paginated user list (118 ms)
+  API — orders, trades, resolution, economy
+    ✓ limit order flow: place SELL + crossing BUY via API -> trade at maker price; GET /orders shows both filled (186 ms)
+    ✓ order validation and ownership: price >= 1 -> 422, foreign order -> 403, cancel own order -> 200 (180 ms)
+    ✓ [BUG-08] malformed ids are client errors: GET /orders/not-a-uuid and GET /markets/not-a-uuid -> 4xx, not 500 (154 ms)
+    ✓ market trade via API: quote, then trade with slippage guard (positive and negative) (205 ms)
+    ✓ admin resolves a market via API -> winners are paid, market cache is invalidated (220 ms)
+    ✓ economy via API: daily bonus 200 then 429; ad session 201; purchase 201; /economy/me (182 ms)
+    ✓ GET /health and /health/detailed report database and redis as ok; unknown route -> 404 (142 ms)
+
+PASS integration test/api/read-endpoints.api.test.ts
+  API — read endpoints on a traded market
+    ✓ markets: list (filters, sorting), categories, details, stats (286 ms)
+    ✓ market comments: add (auth), list, delete by author; foreign delete -> 403 (244 ms)
+    ✓ users: profile, me, update profile, search, leaderboard (249 ms)
+    ✓ portfolio: summary, positions, trades, balance history, pnl (270 ms)
+    ✓ analytics: candles, price line, volume, platform metrics; candle aggregation job (266 ms)
+    ✓ activity feeds and notifications (order_filled for both sides) (272 ms)
+
+PASS integration test/integration/orderbook.market-trade.test.ts
+  OrderBookService — market trades and slippage
+    ✓ quote sweeps the book: budget 8 WX buys 10 @0.50 + the rest @0.60, fee included (129 ms)
+    ✓ market BUY whose average price deviates more than maxSlippage from expectedPrice is rejected and fully rolled back (145 ms)
+    ✓ market BUY within tolerance executes exactly as quoted (shares, cost, fee) and pays makers at their prices (139 ms)
+    ✓ market BUY: no liquidity -> INVALID_TRADE_AMOUNT; amount below minimum -> MIN_TRADE_AMOUNT; not enough cash -> INSUFFICIENT_BALANCE (109 ms)
+    ✓ market SELL fills against best bids, credits proceeds minus 0.5% and un-reserves the unfilled part (111 ms)
+    ✓ market SELL with more shares than owned is rejected (105 ms)
+    ✓ [BUG-03] a market BUY never fills against the same user's resting SELL order (no wash trades) (116 ms)
+    ✓ [BUG-04] market BUY where the budget is the binding constraint is executed (2 WX against an ask 10 @0.50) (110 ms)
+  OrderBookService — market resolution
+    ✓ YES outcome pays 1.0 WX per winning share from the collateral pool, zeroes positions and cancels resting orders (134 ms)
+    ✓ a market cannot be resolved twice (MARKET_ALREADY_RESOLVED); unknown market -> 404 (124 ms)
+    ✓ INVALID outcome refunds every participant his net principal (fees excluded) (123 ms)
+
+PASS integration test/integration/portfolio.pnl.test.ts
+  PortfolioService — PnL
+    ✓ unrealized PnL = (current price - average price) * quantity, also in percent (113 ms)
+    ✓ portfolio is cached in Redis (pm:portfolio:portfolio:<userId>, TTL <= 10s) (94 ms)
+    ✓ [BUG-05] right after buying at the market price the total PnL equals only the paid fee (cost is not counted as a loss) (130 ms)
+    ✓ PnL summary: trading stats and resolution payouts after a resolved market (132 ms)
+    ✓ balance history is paginated and filterable by type (111 ms)
+
+PASS integration test/integration/economy.test.ts
+  EconomyService — daily bonus
+    ✓ first claim credits DAILY_BONUS_AMOUNT (25 WX) with streak 1; second claim the same day is rejected (64 ms)
+    ✓ claiming on consecutive days increases the streak (60 ms)
+    ✓ concurrent claims are serialized: exactly one of 5 parallel requests succeeds (47 ms)
+  EconomyService — rewarded ad sessions
+    ✓ session is stored in Redis with TTL 600s; a premature claim is rejected without burning the session (43 ms)
+    ✓ after the minimum watch time the reward is credited once; the session cannot be reused (45 ms)
+    ✓ a session of another user is rejected with 403 (43 ms)
+    ✓ cooldown after a reward and the daily limit block new sessions (429) (51 ms)
+  EconomyService — purchases and wallet
+    ✓ mock provider purchase of "starter" credits 500 WX immediately; unknown package -> 404 (51 ms)
+    ✓ status aggregates balance, ad availability and daily bonus (50 ms)
+    ✓ creditWx / debitWx keep the ledger consistent and refuse invalid amounts (57 ms)
+
+PASS unit test/unit/dto-wallet-auth.unit.test.ts
+  DTO validation (zod schemas from src)
+    ✓ PlaceLimitOrderDto: price strictly inside (0,1), positive quantity, enums (1 ms)
+    ✓ RegisterDto: email normalised to lower case, password policy, legal consent required (1 ms)
+    ✓ CreateMarketDto: market must close at least 1 hour from now (1 ms)
+  wallet / payment provider
+    ✓ assertHasCash throws InsufficientBalanceError only when available < required (5 ms)
+    ✓ mock payment provider succeeds instantly and is selected by PAYMENT_PROVIDER=mock (1 ms)
+  AuthService.verifyAccessToken
+    ✓ accepts tokens signed with JWT_ACCESS_SECRET and distinguishes expired / invalid tokens (12 ms)
+
+PASS integration test/integration/cache.service.test.ts
+  CacheService on Redis
+    ✓ set/get/del with namespace prefix and TTL (49 ms)
+    ✓ getOrSet calls the fetcher only on a cache miss (32 ms)
+    ✓ delPattern removes all matching keys (34 ms)
+    ✓ distributed lock: second acquire fails until the owner releases it; a foreign token cannot release (33 ms)
+    ✓ sliding-window rate limit allows `limit` hits and blocks the next one (31 ms)
+    ✓ sorted-set helpers keep members ordered by score (38 ms)
+
+PASS unit test/unit/guards-middleware.unit.test.ts
+  common/guards — RBAC
+    ✓ requireRole uses the hierarchy user < moderator < admin (1 ms)
+    ✓ requireAdminKey compares the X-Admin-Key header with ADMIN_SECRET_KEY
+    ✓ requireOwnerOrAdmin lets the owner and admins through, rejects others (4 ms)
+  common/middleware
+    ✓ validate() replaces the source with parsed data or forwards a 422 ValidationError
+    ✓ sanitizeResponse() strips password_hash / email tokens recursively and serialises dates (1 ms)
+    ✓ requestId() attaches a UUID
+
+PASS unit test/unit/errors.unit.test.ts
+  common/errors
+    ✓ error classes carry code and HTTP status (1 ms)
+    ✓ errorHandler: ZodError -> 422 with field details (1 ms)
+    ✓ errorHandler: AppError keeps its status/code; PG unique violation -> 409; FK violation -> 400; unknown -> 500 (3 ms)
+
+------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------
+File                          | % Stmts | % Branch | % Funcs | % Lines | Uncovered Line #s                                                                                                 
+------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------
+All files                     |   74.35 |    44.66 |   73.53 |   78.15 |                                                                                                                   
+ src                          |      96 |       50 |   81.81 |      96 |                                                                                                                   
+  app.ts                      |      96 |       50 |   81.81 |      96 | 73,98,172-173                                                                                                     
+ src/common                   |    97.7 |     85.1 |     100 |    97.6 |                                                                                                                   
+  errors.ts                   |     100 |    86.66 |     100 |     100 | 57,240                                                                                                            
+  guards.ts                   |   93.22 |     92.3 |     100 |   92.59 | 30,49,64,100                                                                                                      
+  legal.constants.ts          |     100 |      100 |     100 |     100 |                                                                                                                   
+  logger.ts                   |   96.29 |    66.66 |     100 |   96.29 | 32                                                                                                                
+  middleware.ts               |     100 |       90 |     100 |     100 | 17                                                                                                                
+ src/config                   |   69.23 |    42.85 |     100 |      68 |                                                                                                                   
+  index.ts                    |   69.23 |    42.85 |     100 |      68 | 93,100-108,119-121                                                                                                
+ src/database                 |   88.88 |       50 |     100 |   88.88 |                                                                                                                   
+  connection.ts               |   88.88 |       50 |     100 |   88.88 | 35-36                                                                                                             
+ src/infrastructure/metrics   |    92.3 |    66.66 |      60 |    92.3 |                                                                                                                   
+  prometheus.ts               |    92.3 |    66.66 |      60 |    92.3 | 91,95                                                                                                             
+ src/infrastructure/redis     |   77.63 |    73.33 |   72.22 |      80 |                                                                                                                   
+  cache.service.ts            |   77.63 |    73.33 |   72.22 |      80 | 11-17,49-50,63,71,82,135,142-145                                                                                  
+ src/infrastructure/websocket |   79.06 |    58.33 |   72.72 |   80.99 |                                                                                                                   
+  ws.service.ts               |   79.06 |    58.33 |   72.72 |   80.99 | 54,59,84-85,89,125-126,179-186,231-232,272-279,291                                                                
+ src/modules/activity         |    92.1 |    57.14 |     100 |   97.22 |                                                                                                                   
+  activity.router.ts          |     100 |     87.5 |     100 |     100 | 11                                                                                                                
+  activity.service.ts         |   84.21 |    38.46 |     100 |   94.11 | 26                                                                                                                
+ src/modules/admin            |   59.09 |     9.52 |      30 |      60 |                                                                                                                   
+  admin.router.ts             |   59.09 |     9.52 |      30 |      60 | 21-36,52,72-75,86,95,126-134,139-152,157-162,173-178                                                              
+ src/modules/analytics        |   80.43 |    32.35 |   83.33 |   87.95 |                                                                                                                   
+  analytics.router.ts         |     100 |       80 |     100 |     100 | 15-16                                                                                                             
+  analytics.service.ts        |      75 |    24.13 |   78.57 |   84.12 | 77-122,160-176                                                                                                    
+ src/modules/auth             |   94.85 |    77.77 |   94.11 |   95.52 |                                                                                                                   
+  auth.router.ts              |     100 |      100 |     100 |     100 |                                                                                                                   
+  auth.service.ts             |   93.63 |    77.14 |    90.9 |   94.44 | 87,102,189,274,289,341                                                                                            
+ src/modules/bots             |   19.29 |     12.5 |      25 |   21.15 |                                                                                                                   
+  market-maker.service.ts     |   19.29 |     12.5 |      25 |   21.15 | 10,23-139                                                                                                         
+ src/modules/economy          |   62.19 |    35.95 |   67.92 |   64.72 |                                                                                                                   
+  economy.router.ts           |   61.19 |    23.52 |   61.53 |   65.07 | 41-64,78-79,89-94,112                                                                                             
+  economy.service.ts          |   65.09 |    37.38 |   80.76 |   66.83 | 141,150-173,183-185,192-278,330-333,381,399,410,597-601,605                                                       
+  payment.provider.ts         |    90.9 |        0 |     100 |    90.9 | 64                                                                                                                
+  payment.yookassa.ts         |      15 |        0 |       0 |   16.21 | 22-28,38-126                                                                                                      
+  wallet.ts                   |   91.42 |    68.96 |     100 |   96.96 | 75                                                                                                                
+ src/modules/ingest           |    8.05 |        0 |    2.63 |    9.79 |                                                                                                                   
+  ingest.service.ts           |    7.28 |        0 |    4.76 |    8.46 | 40-61,72-323                                                                                                      
+  polymarket.client.ts        |    9.41 |        0 |       0 |    12.5 | 42-47,52,56-58,63-66,70-75,79-117,123-146                                                                         
+ src/modules/markets          |   80.89 |    52.77 |   88.46 |   89.36 |                                                                                                                   
+  markets.router.ts           |   92.68 |    66.66 |      90 |   92.68 | 70-72                                                                                                             
+  markets.service.ts          |   76.72 |    50.79 |    87.5 |      88 | 169,173,184,217,246-270                                                                                           
+ src/modules/notifications    |   80.85 |    45.45 |   85.71 |   80.85 |                                                                                                                   
+  notification.router.ts      |   85.71 |      100 |      75 |   85.71 | 22-23                                                                                                             
+  notification.service.ts     |   78.78 |    45.45 |      90 |   78.78 | 61-62,83-84,103-106                                                                                               
+ src/modules/orders           |   84.32 |    54.12 |   93.93 |   88.71 |                                                                                                                   
+  orderbook.service.ts        |   84.44 |    54.48 |   96.29 |   89.01 | 236,321-338,410,902,908,1019-1067,1104,1439,1510-1513,1565,1622,1652,1705-1733,1811,1852,1897,1946,2035,2059,2194 
+  orders.router.ts            |   80.76 |        0 |   83.33 |   80.76 | 15-18,32                                                                                                          
+ src/modules/portfolio        |   95.12 |    55.55 |     100 |   98.73 |                                                                                                                   
+  portfolio.router.ts         |     100 |      100 |     100 |     100 |                                                                                                                   
+  portfolio.service.ts        |   93.33 |    51.21 |     100 |   98.24 | 184                                                                                                               
+ src/modules/trading          |     100 |      100 |     100 |     100 |                                                                                                                   
+  trading.router.ts           |     100 |      100 |     100 |     100 |                                                                                                                   
+ src/modules/users            |   78.82 |    53.84 |   85.71 |   81.81 |                                                                                                                   
+  users.router.ts             |   92.85 |     87.5 |   83.33 |   92.85 | 39-40                                                                                                             
+  users.service.ts            |   71.92 |    47.72 |    87.5 |   75.51 | 109-113,139-150,210-226                                                                                           
+------------------------------|---------|----------|---------|---------|-------------------------------------------------------------------------------------------------------------------
+
+=============================== Coverage summary ===============================
+Statements   : 74.35% ( 2033/2734 )
+Branches     : 44.66% ( 481/1077 )
+Functions    : 73.53% ( 264/359 )
+Lines        : 78.15% ( 1993/2550 )
+================================================================================
+Test Suites: 12 passed, 12 total
+Tests:       102 passed, 102 total
+Snapshots:   0 total
+Time:        17.819 s
+Ran all test suites in 2 projects.
+
+real	0m19.719s
+user	0m10.118s
+sys	0m0.906s
+EXIT=0

@@ -1,0 +1,163 @@
+● Validation Warning:
+
+  Unknown option "coverageThresholds" with value {"global": {"branches": 60, "functions": 60, "lines": 60, "statements": 60}} was found. Did you mean "coverageThreshold"?
+  This is probably a typing mistake. Fixing it will remove this message.
+
+  Configuration Documentation:
+  https://jestjs.io/docs/configuration
+
+● Validation Warning:
+
+  Unknown option "coverageThresholds" with value {"global": {"branches": 60, "functions": 60, "lines": 60, "statements": 60}} was found. Did you mean "coverageThreshold"?
+  This is probably a typing mistake. Fixing it will remove this message.
+
+  Configuration Documentation:
+  https://jestjs.io/docs/configuration
+
+PASS test/portfolio.test.ts
+  Portfolio — Weighted Average Price
+    ✓ Single buy sets average price correctly (3 ms)
+    ✓ Two buys at different prices averages correctly (1 ms)
+    ✓ Unequal quantities weight average correctly
+    ✓ Selling does not change average price
+    ✓ Multiple buys and sells track correctly (1 ms)
+  Portfolio — Realized PnL
+    ✓ Profit on sell: current > avg price
+    ✓ Loss on sell: current < avg price
+    ✓ Break-even: realized PnL = 0 when sell price = avg price
+    ✓ Partial sell accumulates realized PnL correctly (1 ms)
+    ✓ Full position close: quantity goes to 0 (1 ms)
+    ✓ Resolution win: shares × $1 payout
+    ✓ Resolution loss: shares worth $0
+  Portfolio — Unrealized PnL
+    ✓ Positive unrealized PnL when price above avg
+    ✓ Negative unrealized PnL when price below avg
+    ✓ Zero unrealized PnL at cost basis (1 ms)
+    ✓ Unrealized PnL at market close (price = 0 or 1) (1 ms)
+    ✓ Zero unrealized PnL on empty position
+  Portfolio — Total PnL
+    ✓ Total PnL = realized + unrealized
+    ✓ Leaderboard scenario: top trader
+  Portfolio — Balance Tracking
+    ✓ Available balance decreases after buy
+    ✓ Available balance increases after sell
+    ✓ Reserved balance tracks open limit orders (1 ms)
+    ✓ Cancel order releases reserved funds
+
+PASS test/orderbook.test.ts
+  Order Book — Matching Engine
+    Basic matching
+      ✓ Matching buy and sell at same price produces one fill (3 ms)
+      ✓ Buy price > sell price triggers match (bid > ask = crossing) (1 ms)
+      ✓ Buy price < sell price produces no fill (spread)
+      ✓ No orders on either side produces no fills
+    Partial fills
+      ✓ Large buy partially fills against small sell (1 ms)
+      ✓ One buy fills across multiple sells
+      ✓ Multiple buys fill against one large sell (20 ms)
+    Price priority (best bid/ask first)
+      ✓ Highest buy price matches first
+      ✓ Lowest sell price matches first (1 ms)
+    FIFO within same price level
+      ✓ Earlier order at same price fills first
+    Edge cases
+      ✓ Cancelled orders are skipped (1 ms)
+      ✓ Filled orders are skipped
+      ✓ Total filled quantity never exceeds order quantity
+      ✓ Fill price is maker (seller) price, not taker (buyer) price
+  Order Book — Spread Calculation
+    ✓ Spread is positive when ask > bid (1 ms)
+    ✓ Zero spread when bid = ask (instant match)
+    ✓ Null spread with empty order book
+    ✓ Negative spread indicates crossed book (arbitrage opportunity)
+
+PASS test/lmsr.engine.test.ts
+  LMSR Engine — Price Calculations
+    Initial market state (q_yes = q_no = 0)
+      ✓ YES price should be 0.5 at equal shares (4 ms)
+      ✓ NO price should be 0.5 (complement of YES)
+      ✓ Prices always sum to 1.0
+    Price response to trades
+      ✓ Buying YES shares increases YES price (3 ms)
+      ✓ Buying NO shares decreases YES price
+      ✓ Large YES position pushes price close to 1 (1 ms)
+      ✓ Large NO position pushes YES price close to 0
+      ✓ Price is monotonically increasing with YES shares (2 ms)
+    Cost function
+      ✓ Buying 1 share costs more than 0 (1 ms)
+      ✓ Cost increases non-linearly (price impact) (1 ms)
+      ✓ Selling reverses buying (round-trip invariant) (1 ms)
+      ✓ Cost is always positive for buying (2 ms)
+      ✓ Return is always positive for selling (1 ms)
+    Budget to shares conversion
+      ✓ $100 budget yields positive share count (7 ms)
+      ✓ Larger budget yields more shares (27 ms)
+      ✓ Cost verification: shares from budget cost ≈ budget (6 ms)
+      ✓ Works for NO side as well (5 ms)
+    Numerical stability
+      ✓ Handles very large share quantities without overflow (1 ms)
+      ✓ Handles very small b parameter
+      ✓ Price stays in [0,1] under all conditions (1 ms)
+      ✓ Cost function is always finite (1 ms)
+    Symmetry properties
+      ✓ YES and NO are symmetric at equal shares
+      ✓ Market is zero-sum: total cost = total payout at resolution (1 ms)
+    Liquidity parameter b
+      ✓ Higher b = less price impact per trade
+      ✓ Initial liquidity determines b correctly
+  LMSR Engine — Trade Scenarios
+    ✓ Scenario: whale buy moves price significantly (6 ms)
+    ✓ Scenario: small trade has minimal price impact (3 ms)
+    ✓ Scenario: arbitrage opportunity closes correctly (1 ms)
+
+PASS test/auth.service.test.ts
+  Auth — Registration Validation
+    ✓ Valid registration passes (3 ms)
+    ✓ Email is lowercased automatically
+    ✓ Invalid email rejected (1 ms)
+    ✓ Short username rejected (< 3 chars)
+    ✓ Username with special chars rejected
+    ✓ Username with allowed chars passes (letters, numbers, _, -) (1 ms)
+    ✓ Password without uppercase rejected
+    ✓ Password without number rejected
+    ✓ Password under 8 chars rejected
+  Auth — Token Hashing
+    ✓ hashToken produces consistent output
+    ✓ hashToken is 64 hex chars (SHA-256)
+    ✓ Different tokens produce different hashes
+    ✓ Token reuse is detectable via hash comparison
+    ✓ Slightly altered token produces different hash (1 ms)
+  Auth — Brute-force Protection
+    ✓ Account not locked before 5 failed attempts
+    ✓ Account locked at exactly 5 failed attempts
+    ✓ Account remains locked while within lock window
+    ✓ Account unlocks after lock window expires
+    ✓ Lock duration is 15 minutes
+    ✓ Account not locked if lockedUntil is null
+  Auth — JWT Payload Structure
+    ✓ Valid payload passes structure check
+    ✓ Missing sub field fails
+    ✓ Missing role field fails (1 ms)
+    ✓ Non-string sub fails
+  Auth — Refresh Token Rotation
+    ✓ New refresh token is generated on each use
+    ✓ Token reuse detection: revoking all tokens on reuse
+    ✓ Valid token: found and not revoked
+    ✓ Expired token is rejected
+
+
+=============================== Coverage summary ===============================
+Statements   : 0% ( 0/3099 )
+Branches     : 0% ( 0/1072 )
+Functions    : 0% ( 0/399 )
+Lines        : 0% ( 0/2911 )
+================================================================================
+Test Suites: 4 passed, 4 total
+Tests:       97 passed, 97 total
+Snapshots:   0 total
+Time:        7.754 s
+Ran all test suites.
+
+real	0m8.304s
+user	0m46.054s
+sys	0m6.900s

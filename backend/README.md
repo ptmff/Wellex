@@ -226,3 +226,16 @@ docker-compose --profile debug up -d
 - Rate limiting: 100/min general, 30/min trading, 20/15min auth
 - `SELECT FOR UPDATE` prevents double-spending
 - Sensitive fields stripped from responses
+
+## Тесты
+
+Unit-, интеграционные (PostgreSQL 16 + Redis 7) и API-тесты (supertest, WebSocket) лежат в `test/`.
+Нужна отдельная БД, в имени которой есть `test` (по умолчанию `prediction_market_test` на `localhost:5433`), и Redis на `localhost:6379`.
+
+```bash
+npm ci
+npx jest --coverage --ci     # unit + integration + API
+npm run test:unit            # без БД
+```
+
+Отчёт с результатами, покрытием и найденными дефектами лежит в [`../docs/test-report/README.md`](../docs/test-report/README.md).

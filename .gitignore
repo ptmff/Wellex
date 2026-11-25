@@ -53,3 +53,7 @@ lerna-debug.log*
 /.windsurf/
 /AGENTS.md
 
+
+# Test-run evidence for the course report (docs/test-report)
+!docs/test-report/run-logs/
+!docs/test-report/run-logs/*.log

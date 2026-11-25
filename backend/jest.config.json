@@ -1,8 +1,4 @@
 {
-  "preset": "ts-jest",
-  "testEnvironment": "node",
-  "roots": ["<rootDir>/test", "<rootDir>/src"],
-  "testMatch": ["**/*.test.ts", "**/*.spec.ts"],
   "collectCoverageFrom": [
     "src/**/*.ts",
     "!src/main.ts",
@@ -10,30 +6,112 @@
     "!src/database/seeds/**",
     "!src/**/*.d.ts"
   ],
-  "coverageThresholds": {
+  "coverageThreshold": {
     "global": {
-      "branches": 60,
-      "functions": 60,
-      "lines": 60,
-      "statements": 60
+      "statements": 70,
+      "branches": 40,
+      "functions": 70,
+      "lines": 75
     }
   },
   "coverageDirectory": "coverage",
-  "coverageReporters": ["text", "lcov", "html"],
-  "moduleNameMapper": {
-    "^@/(.*)$": "<rootDir>/src/$1",
-    "^@modules/(.*)$": "<rootDir>/src/modules/$1",
-    "^@common/(.*)$": "<rootDir>/src/common/$1",
-    "^@config/(.*)$": "<rootDir>/src/config/$1",
-    "^@infra/(.*)$": "<rootDir>/src/infrastructure/$1"
-  },
-  "transform": {
-    "^.+\\.ts$": ["ts-jest", {
-      "tsconfig": {
-        "strict": false
+  "coverageReporters": [
+    "text",
+    "text-summary",
+    "lcov",
+    "html",
+    "json-summary"
+  ],
+  "testTimeout": 30000,
+  "verbose": true,
+  "projects": [
+    {
+      "displayName": "unit",
+      "preset": "ts-jest",
+      "testEnvironment": "node",
+      "roots": [
+        "<rootDir>/test/unit"
+      ],
+      "testMatch": [
+        "**/*.test.ts"
+      ],
+      "setupFiles": [
+        "<rootDir>/test/setup/env.ts"
+      ],
+      "collectCoverageFrom": [
+        "src/**/*.ts",
+        "!src/main.ts",
+        "!src/database/run-migrations.ts",
+        "!src/database/seeds/**",
+        "!src/**/*.d.ts"
+      ],
+      "moduleNameMapper": {
+        "^@/(.*)$": "<rootDir>/src/$1",
+        "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+        "^@common/(.*)$": "<rootDir>/src/common/$1",
+        "^@config/(.*)$": "<rootDir>/src/config/$1",
+        "^@infra/(.*)$": "<rootDir>/src/infrastructure/$1"
+      },
+      "transform": {
+        "^.+\\.ts$": [
+          "ts-jest",
+          {
+            "tsconfig": {
+              "strict": false
+            },
+            "diagnostics": {
+              "warnOnly": true
+            }
+          }
+        ]
       }
-    }]
-  },
-  "testTimeout": 10000,
-  "verbose": true
+    },
+    {
+      "displayName": "integration",
+      "preset": "ts-jest",
+      "testEnvironment": "node",
+      "roots": [
+        "<rootDir>/test/integration",
+        "<rootDir>/test/api"
+      ],
+      "testMatch": [
+        "**/*.test.ts"
+      ],
+      "setupFiles": [
+        "<rootDir>/test/setup/env.ts"
+      ],
+      "setupFilesAfterEnv": [
+        "<rootDir>/test/setup/integration.ts"
+      ],
+      "globalSetup": "<rootDir>/test/setup/global-setup.ts",
+      "collectCoverageFrom": [
+        "src/**/*.ts",
+        "!src/main.ts",
+        "!src/database/run-migrations.ts",
+        "!src/database/seeds/**",
+        "!src/**/*.d.ts"
+      ],
+      "moduleNameMapper": {
+        "^@/(.*)$": "<rootDir>/src/$1",
+        "^@modules/(.*)$": "<rootDir>/src/modules/$1",
+        "^@common/(.*)$": "<rootDir>/src/common/$1",
+        "^@config/(.*)$": "<rootDir>/src/config/$1",
+        "^@infra/(.*)$": "<rootDir>/src/infrastructure/$1"
+      },
+      "transform": {
+        "^.+\\.ts$": [
+          "ts-jest",
+          {
+            "tsconfig": {
+              "strict": false
+            },
+            "diagnostics": {
+              "warnOnly": true
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "maxWorkers": 1
 }

@@ -16,3 +16,7 @@ logs/
 !.env.example
 !**/.env.example
 
+
+# Test coverage output
+coverage/
+jest-output.log

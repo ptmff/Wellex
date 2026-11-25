@@ -1,0 +1,214 @@
+# run: 2026-11-25 15:47:57 MSK | node v24.22.1 | PostgreSQL 16.16 (Debian 16.16-1.pgdg13+1) on x86_64-pc-linux-gnu | Redis server v=8.0.2
+# cmd: npx jest --coverage --ci   (known bugs marked it.failing)
+PASS integration test/api/auth.api.test.ts
+  API /auth
+    ✓ POST /register -> 201, returns token pair, creates balance 1000 WX and signup_bonus ledger entry (450 ms)
+    ✓ POST /register: duplicate email -> 409, weak password / no consent -> 422 (363 ms)
+    ✓ POST /login -> 200 with valid credentials; wrong password -> 401 INVALID_CREDENTIALS; unknown email -> 401 (131 ms)
+    ✓ 5 failed logins lock the account for 15 minutes: even the correct password is refused with ACCOUNT_LOCKED (138 ms)
+    ✓ suspended account cannot log in (403 ACCOUNT_SUSPENDED) (108 ms)
+    ✓ POST /refresh rotates tokens; reusing the old refresh token revokes the whole token family (113 ms)
+    ✓ refresh: missing token -> 400, random token -> 401, expired token -> 401 TOKEN_EXPIRED (136 ms)
+    ✓ [BUG-06] reuse detection still works when the opportunistic token clean-up has run (revoked tokens are not deleted) (338 ms)
+    ✓ GET /me requires a valid access token (none -> 401, garbage -> TOKEN_INVALID, expired -> TOKEN_EXPIRED) (120 ms)
+    ✓ POST /logout revokes the refresh token and drops the cached user (117 ms)
+    ✓ PATCH /password changes the password and revokes all refresh tokens (630 ms)
+
+PASS integration test/api/realtime-ratelimit.api.test.ts
+  WebSocket /ws
+    ✓ greets a new client with a heartbeat containing clientId and answers ping (173 ms)
+    ✓ auth: invalid token -> error; portfolio subscription requires auth; valid token -> subscribed (168 ms)
+    ✓ market subscribers receive an orderbook price_update after an order is placed via the API (170 ms)
+    ✓ [BUG-09] each market event is delivered to a subscriber exactly once (960 ms)
+    ✓ unsubscribed clients stop receiving market events (663 ms)
+  Rate limiting
+    ✓ auth endpoints: 20 requests per 15 min per IP, the 21st gets 429 (160 ms)
+    ✓ trading endpoints: 30 requests per minute, the 31st gets 429 (199 ms)
+    ✓ [BUG-10] trading limiter is per user: another user is not throttled by the first user's 30 requests (252 ms)
+
+PASS integration test/integration/orderbook.matching.test.ts
+  OrderBookService — limit orders, reservation, matching
+    ✓ BUY limit reserves qty*price*(1+0.5%) of cash and creates an open order (136 ms)
+    ✓ BUY limit with insufficient cash is rejected and nothing is written (119 ms)
+    ✓ SELL limit without shares is rejected (INSUFFICIENT_SHARES); with shares it reserves them (108 ms)
+    ✓ rejects orders on inactive / closed markets and invalid prices (153 ms)
+    ✓ crossing BUY taker fills at the maker (SELL) price; buyer gets the price-improvement refund; fees 0.5% each side go to the exchange (152 ms)
+    ✓ matching follows price-time priority and supports partial fills (127 ms)
+    ✓ non-crossing orders rest in the book; snapshot aggregates price levels, spread and mid price (155 ms)
+    ✓ a user never matches against his own resting order (self-trade prevention in limit matching) (127 ms)
+    ✓ BUY YES + BUY NO with prices summing to >= 1 mint a pair of shares backed by 1.0 collateral (142 ms)
+    ✓ [BUG-02] after a complementary fill the market YES price reflects what the YES buyer paid (between 0.55 and 0.60) (123 ms)
+    ✓ complementary BUY orders whose prices sum to < 1 do not match (107 ms)
+  OrderBookService — cancel and expiry
+    ✓ cancelling a BUY order releases exactly the reserved cash; second cancel fails (106 ms)
+    ✓ only the owner can cancel an order (403 FORBIDDEN), unknown order -> 404 (95 ms)
+    ✓ cancelling a partially filled BUY refunds only the unfilled remainder; filled order cannot be cancelled (111 ms)
+    ✓ cancelling a SELL order releases the reserved shares (102 ms)
+    ✓ expireStaleOrders() expires orders past expires_at and refunds them (111 ms)
+    ✓ expireDueMarkets() moves overdue active markets to "expired" and releases their resting orders (105 ms)
+    ✓ [BUG-01] order book snapshot reflects a newly placed order immediately (cache is invalidated on placeOrder) (166 ms)
+
+15:48:09 [error]: Unhandled error select count(*) as "count" from "users" order by "created_at" desc limit $1 - column "users.created_at" must appear in the GROUP BY clause or be used in an aggregate function
+{
+  "stack": "error: select count(*) as \"count\" from \"users\" order by \"created_at\" desc limit $1 - column \"users.created_at\" must appear in the GROUP BY clause or be used in an aggregate function\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "32cd25b8-2332-40af-a994-ec1c32575261",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "method": "GET"
+}
+15:48:09 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/admin/users?page=1&limit=10",
+  "statusCode": 500,
+  "duration": 9,
+  "ip": "127.0.0.1",
+  "userId": "b47ae4b0-68da-43de-bda4-325e5906469e"
+}
+15:48:09 [error]: Unhandled error select "o".*, "m"."title" as "market_title" from "orders" as "o" left join "markets" as "m" on "o"."market_id" = "m"."id" where "o"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"o\".*, \"m\".\"title\" as \"market_title\" from \"orders\" as \"o\" left join \"markets\" as \"m\" on \"o\".\"market_id\" = \"m\".\"id\" where \"o\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "2cc7a77a-dffd-44fd-ad91-2ad1ecaef75e",
+  "url": "/api/v1/orders/not-a-uuid",
+  "method": "GET"
+}
+15:48:09 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/orders/not-a-uuid",
+  "statusCode": 500,
+  "duration": 2,
+  "ip": "127.0.0.1",
+  "userId": "34f96d75-18f7-4cd5-81c0-0e02ee635dfe"
+}
+15:48:09 [error]: Unhandled error select "m".*, "c"."name" as "category_name", "c"."slug" as "category_slug", "u"."username" as "creator_username", "u"."display_name" as "creator_display_name" from "markets" as "m" left join "market_categories" as "c" on "m"."category_id" = "c"."id" left join "users" as "u" on "m"."creator_id" = "u"."id" where "m"."id" = $1 limit $2 - invalid input syntax for type uuid: "not-a-uuid"
+{
+  "stack": "error: select \"m\".*, \"c\".\"name\" as \"category_name\", \"c\".\"slug\" as \"category_slug\", \"u\".\"username\" as \"creator_username\", \"u\".\"display_name\" as \"creator_display_name\" from \"markets\" as \"m\" left join \"market_categories\" as \"c\" on \"m\".\"category_id\" = \"c\".\"id\" left join \"users\" as \"u\" on \"m\".\"creator_id\" = \"u\".\"id\" where \"m\".\"id\" = $1 limit $2 - invalid input syntax for type uuid: \"not-a-uuid\"\n    at parseErrorMessage (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:394:9)\n    at Parser.handlePacket (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:212:19)\n    at Parser.parse (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/parser.ts:105:30)\n    at Socket.<anonymous> (/workspace/wellex-tests/backend/node_modules/pg-protocol/src/index.ts:7:48)\n    at Socket.emit (node:events:514:28)\n    at addChunk (node:internal/streams/readable:569:12)\n    at readableAddChunkPushByteMode (node:internal/streams/readable:520:3)\n    at Socket.Readable.push (node:internal/streams/readable:400:5)\n    at TCP.onStreamRead (node:internal/stream_base_commons:194:23)",
+  "requestId": "3917f7ab-3600-41d4-b5ac-5702da525d85",
+  "url": "/api/v1/markets/not-a-uuid",
+  "method": "GET"
+}
+15:48:09 [error]: Request completed with server error
+{
+  "method": "GET",
+  "url": "/api/v1/markets/not-a-uuid",
+  "statusCode": 500,
+  "duration": 2,
+  "ip": "127.0.0.1"
+}
+PASS integration test/api/trading-flow.api.test.ts
+  API — RBAC
+    ✓ POST /markets: user -> 403, moderator -> 201, anonymous -> 401 (156 ms)
+    ✓ PATCH /markets/:id by a regular user -> 403; by a moderator -> 200 (122 ms)
+    ✓ /admin/*: user -> 403; moderator may resolve markets but not manage users (admin only) (112 ms)
+    ✓ admin bans a user -> the banned user loses API access immediately (user cache invalidated) (101 ms)
+    ✓ [BUG-07] GET /admin/users (admin) returns the paginated user list (122 ms)
+  API — orders, trades, resolution, economy
+    ✓ limit order flow: place SELL + crossing BUY via API -> trade at maker price; GET /orders shows both filled (169 ms)
+    ✓ order validation and ownership: price >= 1 -> 422, foreign order -> 403, cancel own order -> 200 (163 ms)
+    ✓ [BUG-08] malformed ids are client errors: GET /orders/not-a-uuid and GET /markets/not-a-uuid -> 4xx, not 500 (140 ms)
+    ✓ market trade via API: quote, then trade with slippage guard (positive and negative) (174 ms)
+    ✓ admin resolves a market via API -> winners are paid, market cache is invalidated (187 ms)
+    ✓ economy via API: daily bonus 200 then 429; ad session 201; purchase 201; /economy/me (171 ms)
+    ✓ GET /health and /health/detailed report database and redis as ok; unknown route -> 404 (135 ms)
+
+PASS integration test/api/read-endpoints.api.test.ts
+  API — read endpoints on a traded market
+    ✓ markets: list (filters, sorting), categories, details, stats (278 ms)
+    ✓ market comments: add (auth), list, delete by author; foreign delete -> 403 (236 ms)
+    ✓ users: profile, me, update profile, search, leaderboard (238 ms)
+    ✓ portfolio: summary, positions, trades, balance history, pnl (255 ms)
+    ✓ analytics: candles, price line, volume, platform metrics; candle aggregation job (247 ms)
+    ✓ activity feeds and notifications (order_filled for both sides) (248 ms)
+
+PASS integration test/integration/orderbook.market-trade.test.ts
+  OrderBookService — market trades and slippage
+    ✓ quote sweeps the book: budget 8 WX buys 10 @0.50 + the rest @0.60, fee included (147 ms)
+    ✓ market BUY whose average price deviates more than maxSlippage from expectedPrice is rejected and fully rolled back (116 ms)
+    ✓ market BUY within tolerance executes exactly as quoted (shares, cost, fee) and pays makers at their prices (116 ms)
+    ✓ market BUY: no liquidity -> INVALID_TRADE_AMOUNT; amount below minimum -> MIN_TRADE_AMOUNT; not enough cash -> INSUFFICIENT_BALANCE (88 ms)
+    ✓ market SELL fills against best bids, credits proceeds minus 0.5% and un-reserves the unfilled part (100 ms)
+    ✓ market SELL with more shares than owned is rejected (87 ms)
+    ✓ [BUG-03] a market BUY never fills against the same user's resting SELL order (no wash trades) (103 ms)
+    ✓ [BUG-04] market BUY where the budget is the binding constraint is executed (2 WX against an ask 10 @0.50) (92 ms)
+  OrderBookService — market resolution
+    ✓ YES outcome pays 1.0 WX per winning share from the collateral pool, zeroes positions and cancels resting orders (133 ms)
+    ✓ a market cannot be resolved twice (MARKET_ALREADY_RESOLVED); unknown market -> 404 (154 ms)
+    ✓ INVALID outcome refunds every participant his net principal (fees excluded) (133 ms)
+
+PASS integration test/integration/economy.test.ts
+  EconomyService — daily bonus
+    ✓ first claim credits DAILY_BONUS_AMOUNT (25 WX) with streak 1; second claim the same day is rejected (110 ms)
+    ✓ claiming on consecutive days increases the streak (59 ms)
+    ✓ concurrent claims are serialized: exactly one of 5 parallel requests succeeds (48 ms)
+  EconomyService — rewarded ad sessions
+    ✓ session is stored in Redis with TTL 600s; a premature claim is rejected without burning the session (57 ms)
+    ✓ after the minimum watch time the reward is credited once; the session cannot be reused (55 ms)
+    ✓ a session of another user is rejected with 403 (47 ms)
+    ✓ cooldown after a reward and the daily limit block new sessions (429) (58 ms)
+  EconomyService — purchases and wallet
+    ✓ mock provider purchase of "starter" credits 500 WX immediately; unknown package -> 404 (69 ms)
+    ✓ status aggregates balance, ad availability and daily bonus (48 ms)
+    ✓ creditWx / debitWx keep the ledger consistent and refuse invalid amounts (67 ms)
+
+PASS integration test/integration/portfolio.pnl.test.ts
+  PortfolioService — PnL
+    ✓ unrealized PnL = (current price - average price) * quantity, also in percent (151 ms)
+    ✓ portfolio is cached in Redis (pm:portfolio:portfolio:<userId>, TTL <= 10s) (116 ms)
+    ✓ [BUG-05] right after buying at the market price the total PnL equals only the paid fee (cost is not counted as a loss) (150 ms)
+    ✓ PnL summary: trading stats and resolution payouts after a resolved market (145 ms)
+    ✓ balance history is paginated and filterable by type (109 ms)
+
+PASS unit test/unit/dto-wallet-auth.unit.test.ts
+  DTO validation (zod schemas from src)
+    ✓ PlaceLimitOrderDto: price strictly inside (0,1), positive quantity, enums (1 ms)
+    ✓ RegisterDto: email normalised to lower case, password policy, legal consent required (1 ms)
+    ✓ CreateMarketDto: market must close at least 1 hour from now
+  wallet / payment provider
+    ✓ assertHasCash throws InsufficientBalanceError only when available < required (5 ms)
+    ✓ mock payment provider succeeds instantly and is selected by PAYMENT_PROVIDER=mock (1 ms)
+  AuthService.verifyAccessToken
+    ✓ accepts tokens signed with JWT_ACCESS_SECRET and distinguishes expired / invalid tokens (5 ms)
+
+PASS integration test/integration/cache.service.test.ts
+  CacheService on Redis
+    ✓ set/get/del with namespace prefix and TTL (59 ms)
+    ✓ getOrSet calls the fetcher only on a cache miss (58 ms)
+    ✓ delPattern removes all matching keys (43 ms)
+    ✓ distributed lock: second acquire fails until the owner releases it; a foreign token cannot release (48 ms)
+    ✓ sliding-window rate limit allows `limit` hits and blocks the next one (34 ms)
+    ✓ sorted-set helpers keep members ordered by score (33 ms)
+
+PASS unit test/unit/guards-middleware.unit.test.ts
+  common/guards — RBAC
+    ✓ requireRole uses the hierarchy user < moderator < admin (1 ms)
+    ✓ requireAdminKey compares the X-Admin-Key header with ADMIN_SECRET_KEY
+    ✓ requireOwnerOrAdmin lets the owner and admins through, rejects others (1 ms)
+  common/middleware
+    ✓ validate() replaces the source with parsed data or forwards a 422 ValidationError (1 ms)
+    ✓ sanitizeResponse() strips password_hash / email tokens recursively and serialises dates
+    ✓ requestId() attaches a UUID
+
+PASS unit test/unit/errors.unit.test.ts
+  common/errors
+    ✓ error classes carry code and HTTP status (1 ms)
+    ✓ errorHandler: ZodError -> 422 with field details
+    ✓ errorHandler: AppError keeps its status/code; PG unique violation -> 409; FK violation -> 400; unknown -> 500 (4 ms)
+
+
+=============================== Coverage summary ===============================
+Statements   : 74.35% ( 2033/2734 )
+Branches     : 44.66% ( 481/1077 )
+Functions    : 73.53% ( 264/359 )
+Lines        : 78.15% ( 1993/2550 )
+================================================================================
+Test Suites: 12 passed, 12 total
+Tests:       102 passed, 102 total
+Snapshots:   0 total
+Time:        17.48 s
+Ran all test suites in 2 projects.
+Test results written to: ../docs/test-report/logs/02-final-run.json
+
+real	0m19.281s
+user	0m9.644s
+sys	0m1.051s
+EXIT=0
