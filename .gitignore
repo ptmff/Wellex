@@ -45,3 +45,11 @@ lerna-debug.log*
 # Vite cache
 .vite/
 
+/.ai/
+/.cursor/
+/.agents/
+/.codex/
+/.claude/
+/.windsurf/
+/AGENTS.md
+
